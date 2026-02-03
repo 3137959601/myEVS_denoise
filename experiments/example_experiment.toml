@@ -1,0 +1,168 @@
+# Example experiment config
+#
+# Covers:
+# - optional convert (raw/csv -> evtq)
+# - denoise variants:
+#   * method3 only
+#   * method4 only
+#   * method3+method4 stacked as ONE pipeline (same stream)
+# - compare stats (kept/removed ratio)
+# - optional export videos
+
+[timebase]
+# your sensor: 1 tick = 12.5ns
+# (leave default unless you change device)
+tick_ns = 12.5
+
+[input]
+# You can set this to .evtq directly to skip convert.
+path = "data/30WEVS_hand/input.evtq"
+# assume = "evtq"  # optional override
+# width = 640
+# height = 512
+batch_events = 1000000
+
+[output]
+# All outputs go here
+# You can name by date/experiment id
+# dir = "runs/2026-02-02_hotpixel_baf"
+dir = "data/Refractory"
+
+[progress]
+# Enable tqdm progress bars (useful for long runs).
+# Default is false to avoid any overhead.
+enabled = true
+
+[convert]
+# If input is already evtq, you can disable conversion.
+# If input is raw/csv, set enabled=true and provide width/height in [input].
+enabled = false
+out_evtq = "input.evtq"
+
+# --- Denoise variants ---
+# If you want to run ALL methods (1..8) without writing many [[denoise]] blocks,
+# you can enable [denoise_all] below and optionally add per-method overrides.
+#
+# Note: explicit [[denoise]] blocks (below) are still supported; denoise_all is appended.
+
+[denoise_all]
+enabled = false
+# Typical: run every method except 0/none
+methods = ["1", "2", "3", "4", "5", "6", "7", "8"]
+name_prefix = "m"
+out_prefix = ""
+
+# ---- 每个方法需要哪些阈值/参数？（按实现代码实际使用的字段） ----
+# 1=STC(stc):          time_us, radius_px, min_neighbors
+# 2=Refractory:        refractory_us
+# 3=HotPixel:          time_us, min_neighbors, refractory_us
+# 4=BAF:               time_us, radius_px
+# 5=Combo(stc+refr):   time_us, radius_px, min_neighbors, refractory_us
+# 6=RateLimit:         time_us, min_neighbors
+# 7=GlobalGate:        time_us(EMA tau), min_neighbors(K/s 阈值), refractory_us(hold)
+# 8=DP:                time_us(同极性放行超时)
+#
+# 说明：脚本内部有默认值（time_us=2000, radius_px=1, min_neighbors=2, refractory_us=50）。
+# 你只需要在 override 里写“该方法实际用到的那些参数”。
+
+# Optional per-method overrides (method id as key) —— 只写该方法用得到的字段
+
+[denoise_all.overrides."1"]
+time_us = 2000
+radius_px = 1
+min_neighbors = 2
+
+[denoise_all.overrides."2"]
+refractory_us = 50
+
+[denoise_all.overrides."3"]
+time_us = 2000
+min_neighbors = 5
+refractory_us = 2000
+
+[denoise_all.overrides."4"]
+time_us = 2000
+radius_px = 1
+
+[denoise_all.overrides."5"]
+time_us = 2000
+radius_px = 1
+min_neighbors = 2
+refractory_us = 50
+
+[denoise_all.overrides."6"]
+time_us = 2000
+min_neighbors = 10
+
+[denoise_all.overrides."7"]
+time_us = 2000
+min_neighbors = 50
+refractory_us = 2000
+
+[denoise_all.overrides."8"]
+time_us = 2000
+
+[[denoise]]
+name = "m3_hotpixel"
+method = "3"
+time_us = 2000
+min_neighbors = 5
+refractory_us = 2000
+out_evtq = "m3_hotpixel.evtq"
+
+[[denoise]]
+name = "m4_baf"
+method = "4"
+time_us = 2000
+radius_px = 1
+out_evtq = "m4_baf.evtq"
+
+# (A) stacked: method3+method4 in ONE pass (pipeline)
+[[denoise]]
+name = "m3_m4_pipeline"
+pipeline = ["3", "4"]
+time_us = 2000
+radius_px = 1
+min_neighbors = 5
+refractory_us = 2000
+out_evtq = "m3_m4_pipeline.evtq"
+
+# --- Compare (by event counts) ---
+[[compare]]
+a = "input"
+b = "m3_hotpixel"
+
+[[compare]]
+a = "input"
+b = "m4_baf"
+
+[[compare]]
+a = "input"
+b = "m3_m4_pipeline"
+
+[stats]
+out_csv = "stats_all.csv"
+
+[compare_out]
+out_csv = "compare.csv"
+
+# Optional: quick plots (requires matplotlib)
+[plots]
+enabled = true
+compare_png = "compare.png"
+# x can be "b" to show per-variant bars
+x = "b"
+kind = "bar"
+
+# Optional: export videos (heavy; enable only when needed)
+# [[video]]
+# enabled = false
+# in = "m3_hotpixel"  # ref name
+# out = "m3_hotpixel.mp4"
+# mode = "fps"
+# fps = 60
+# color = "onoff"    # onoff|gray
+# scheme = 1
+# no_hold = true
+# raw_step = 5
+# video_fps = 60

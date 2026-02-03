@@ -1,0 +1,13 @@
+name: myevs
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.10
+  - numpy
+  - opencv
+  - tqdm
+  - matplotlib
+  - numba
+  - pip
+  - pip:
+      - -e .

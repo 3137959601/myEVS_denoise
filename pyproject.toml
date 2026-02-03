@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "myevs"
+version = "0.1.0"
+description = "Offline parsing, denoising, visualization and evaluation for EVS event streams"
+requires-python = ">=3.10"
+authors = [{name = "myEVS"}]
+dependencies = [
+  "numpy>=1.24",
+  "opencv-python>=4.8",
+  "tqdm>=4.66",
+]
+
+[project.scripts]
+myevs = "myevs.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
