@@ -11,21 +11,27 @@ from .events import EventBatch, filter_visibility_batches, unwrap_tick_batches
 from .io.auto import open_events
 from .io.csv_events import write_csv_events
 from .io.evtq import write_evtq
+from .io.hdf5_events import write_hdf5
 from .stats import compute_stats
 from .timebase import TimeBase
 
 
 def _add_common_in(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--in", dest="in_path", required=True, help="input path (.evtq/.csv/.bin)")
+    parser.add_argument("--in", dest="in_path", required=True, help="input path (.evtq/.csv/.hdf5/.bin)")
     parser.add_argument(
         "--assume",
         default=None,
-        choices=["evtq", "csv", "usb_raw_evt3"],
+        choices=["evtq", "csv", "hdf5", "usb_raw_evt3"],
         help="override input kind (omit to auto-detect)",
     )
-    parser.add_argument("--width", type=int, default=None, help="required for csv/usb_raw")
-    parser.add_argument("--height", type=int, default=None, help="required for csv/usb_raw")
+    parser.add_argument("--width", type=int, default=640, help="required for csv/usb_raw, optional for hdf5")
+    parser.add_argument("--height", type=int, default=512, help="required for csv/usb_raw, optional for hdf5")
     parser.add_argument("--batch-events", type=int, default=1_000_000)
+    parser.add_argument(
+        "--hdf5-plugin-path",
+        default=None,
+        help="optional HDF5 plugin dir (for OpenEB compressed HDF5, e.g. .../build/lib/hdf5/plugin)",
+    )
     parser.add_argument(
         "--progress",
         action="store_true",
@@ -61,6 +67,8 @@ def _open(args) -> tuple:
         width=args.width,
         height=args.height,
         batch_events=args.batch_events,
+        tick_ns=float(getattr(args, "tick_ns", 12.5)),
+        hdf5_plugin_path=getattr(args, "hdf5_plugin_path", None),
         assume=args.assume,
     )
     desc = f"{getattr(args, 'cmd', 'run')}: {os.path.basename(str(args.in_path))}"
@@ -73,6 +81,8 @@ def _open_path(path: str, args, *, desc: str) -> tuple:
         width=args.width,
         height=args.height,
         batch_events=args.batch_events,
+        tick_ns=float(getattr(args, "tick_ns", 12.5)),
+        hdf5_plugin_path=getattr(args, "hdf5_plugin_path", None),
         assume=getattr(args, "assume", None),
     )
     return r.meta, _wrap_progress(r.batches, enabled=bool(getattr(args, "progress", False)), desc=desc)
@@ -89,8 +99,11 @@ def cmd_convert(args) -> int:
     if ext == ".csv":
         write_csv_events(out_path, batches)
         return 0
+    if ext in (".hdf5", ".h5"):
+        write_hdf5(out_path, meta, batches, tick_ns=float(getattr(args, "tick_ns", 12.5)))
+        return 0
 
-    raise SystemExit("--out must end with .evtq or .csv")
+    raise SystemExit("--out must end with .evtq, .csv, .hdf5 or .h5")
 
 
 def cmd_denoise(args) -> int:
@@ -131,8 +144,11 @@ def cmd_denoise(args) -> int:
     if ext == ".csv":
         write_csv_events(out_path, den)
         return 0
+    if ext in (".hdf5", ".h5"):
+        write_hdf5(out_path, meta, den, tick_ns=float(tb.tick_ns))
+        return 0
 
-    raise SystemExit("--out must end with .evtq or .csv")
+    raise SystemExit("--out must end with .evtq, .csv, .hdf5 or .h5")
 
 
 def cmd_view(args) -> int:
@@ -140,9 +156,36 @@ def cmd_view(args) -> int:
     # Lazy import so users can run convert/denoise/stats without OpenCV installed.
     from .viz import view_stream
 
-    tb = TimeBase(tick_ns=float(args.tick_ns))
+    style = str(getattr(args, "style", "myevs")).strip().lower()
 
-    if bool(getattr(args, "unwrap_ts", True)):
+    mode = str(args.mode)
+    events_per_frame = int(args.events_per_frame)
+    raw_step = int(args.raw_step)
+    deadzone = int(args.deadzone)
+    binary = bool(args.binary)
+    hold = bool(args.hold)
+    scheme = int(args.scheme)
+    unwrap_ts = bool(getattr(args, "unwrap_ts", True))
+
+    # One-click preset to mimic Prophesee-like event visualization.
+    # Only override fields that are still at parser defaults, so user flags win.
+    if style == "prophesee":
+        if raw_step == 10:
+            raw_step = 20
+        if deadzone == 3:
+            deadzone = 0
+        if not binary:
+            binary = True
+        if hold:
+            hold = False
+        if unwrap_ts:
+            unwrap_ts = False
+
+    tb = TimeBase(tick_ns=float(args.tick_ns))
+    flip_x = bool(getattr(args, "flip_x", False) or getattr(args, "rotate_180", False))
+    flip_y = bool(getattr(args, "flip_y", False) or getattr(args, "rotate_180", False))
+
+    if unwrap_ts:
         bits = str(getattr(args, "ts_bits", "auto"))
         bits_i = int(bits) if bits.isdigit() else None
         batches = unwrap_tick_batches(batches, bits=bits_i)
@@ -150,23 +193,25 @@ def cmd_view(args) -> int:
     view_stream(
         meta,
         batches,
-        mode=args.mode,
+        mode=mode,
         fps=args.fps,
-        events_per_frame=args.events_per_frame,
+        events_per_frame=events_per_frame,
         tick_us=tb.tick_us,
         color=args.color,
-        scheme_id=args.scheme,
+        scheme_id=scheme,
         window_name=args.window,
-        raw_step=args.raw_step,
-        deadzone=args.deadzone,
-        binary=args.binary,
-        hold=args.hold,
+        raw_step=raw_step,
+        deadzone=deadzone,
+        binary=binary,
+        hold=hold,
         show_on=(not args.hide_on),
         show_off=(not args.hide_off),
         realtime=args.realtime,
         out_video=args.out_video,
         video_fps=args.video_fps,
         no_gui=args.no_gui,
+        flip_x=flip_x,
+        flip_y=flip_y,
     )
     return 0
 
@@ -267,6 +312,8 @@ def cmd_sweep(args) -> int:
         width=args.width,
         height=args.height,
         batch_events=args.batch_events,
+        tick_ns=float(args.tick_ns),
+        hdf5_plugin_path=getattr(args, "hdf5_plugin_path", None),
         assume=args.assume,
     )
     in_batches = _wrap_progress(
@@ -291,6 +338,8 @@ def cmd_sweep(args) -> int:
             width=args.width,
             height=args.height,
             batch_events=args.batch_events,
+            tick_ns=float(args.tick_ns),
+            hdf5_plugin_path=getattr(args, "hdf5_plugin_path", None),
             assume=args.assume,
         )
 
@@ -397,20 +446,22 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="myevs", description="Offline EVS tools")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    p_conv = sub.add_parser("convert", help="convert between evtq/csv (input auto-detect)")
+    p_conv = sub.add_parser("convert", help="convert between evtq/csv/hdf5 (input auto-detect)")
     _add_common_in(p_conv)
-    p_conv.add_argument("--out", dest="out_path", required=True, help="output .evtq or .csv")
+    p_conv.add_argument("--tick-ns", type=float, default=12.5, help="timestamp tick length in ns (for hdf5 time conversion)")
+    p_conv.add_argument("--out", dest="out_path", required=True, help="output .evtq/.csv/.hdf5")
     p_conv.set_defaults(func=cmd_convert)
 
-    p_usb = sub.add_parser("convert-usb-raw", help="usb raw (.bin) -> evtq/csv")
+    p_usb = sub.add_parser("convert-usb-raw", help="usb raw (.bin) -> evtq/csv/hdf5")
     _add_common_in(p_usb)
     p_usb.set_defaults(assume="usb_raw_evt3")
-    p_usb.add_argument("--out", dest="out_path", required=True, help="output .evtq or .csv")
+    p_usb.add_argument("--tick-ns", type=float, default=12.5, help="timestamp tick length in ns")
+    p_usb.add_argument("--out", dest="out_path", required=True, help="output .evtq/.csv/.hdf5")
     p_usb.set_defaults(func=cmd_convert)
 
     p_den = sub.add_parser("denoise", help="denoise and save")
     _add_common_in(p_den)
-    p_den.add_argument("--out", dest="out_path", required=True, help="output .evtq or .csv")
+    p_den.add_argument("--out", dest="out_path", required=True, help="output .evtq/.csv/.hdf5")
     p_den.add_argument(
         "--method",
         default="none",
@@ -464,6 +515,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_view.add_argument("--mode", choices=["fps", "events"], default="fps")
     p_view.add_argument("--fps", type=float, default=60.0)
     p_view.add_argument("--events-per-frame", type=int, default=200_000)
+    p_view.add_argument(
+        "--style",
+        default="myevs",
+        choices=["myevs", "prophesee"],
+        help="view style preset: 'prophesee' gives sharper/noisier event look without changing temporal sampling",
+    )
     p_view.add_argument("--tick-ns", type=float, default=12.5, help="timestamp tick length in ns")
     p_view.add_argument("--color", choices=["onoff", "gray", "onoff_rb"], default="onoff")
     p_view.add_argument("--scheme", type=int, default=0, help="Qt scheme id: 0 (white bg, red/blue), 1 (dark bg, custom colors)")
@@ -486,6 +543,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-gui",
         action="store_true",
         help="do not open a window (useful with --out-video)",
+    )
+    p_view.add_argument(
+        "--flip-x",
+        action="store_true",
+        help="flip horizontally (mirror left-right) before rendering/export",
+    )
+    p_view.add_argument(
+        "--flip-y",
+        action="store_true",
+        help="flip vertically (mirror up-down) before rendering/export",
+    )
+    p_view.add_argument(
+        "--rotate-180",
+        action="store_true",
+        help="rotate by 180° (equivalent to --flip-x --flip-y)",
     )
     p_view.add_argument(
         "--no-hold",
@@ -513,6 +585,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_st = sub.add_parser("stats", help="basic stats")
     _add_common_in(p_st)
+    p_st.add_argument("--tick-ns", type=float, default=12.5, help="timestamp tick length in ns (for hdf5 time conversion)")
     p_st.add_argument("--hide-on", action="store_true", help="hide ON events")
     p_st.add_argument("--hide-off", action="store_true", help="hide OFF events")
     p_st.add_argument(
@@ -530,16 +603,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_st.set_defaults(func=cmd_stats)
 
     p_cmp = sub.add_parser("compare-stats", help="compare two streams by event counts (kept/removed ratio)")
-    p_cmp.add_argument("--in-a", required=True, help="input A (.evtq/.csv/.raw)")
-    p_cmp.add_argument("--in-b", required=True, help="input B (.evtq/.csv/.raw)")
+    p_cmp.add_argument("--in-a", required=True, help="input A (.evtq/.csv/.hdf5/.raw)")
+    p_cmp.add_argument("--in-b", required=True, help="input B (.evtq/.csv/.hdf5/.raw)")
     p_cmp.add_argument(
         "--assume",
         default=None,
-        choices=["evtq", "csv", "usb_raw_evt3"],
+        choices=["evtq", "csv", "hdf5", "usb_raw_evt3"],
         help="override input kind for BOTH A/B (omit to auto-detect by extension)",
     )
-    p_cmp.add_argument("--width", type=int, default=None, help="required for csv/usb_raw")
-    p_cmp.add_argument("--height", type=int, default=None, help="required for csv/usb_raw")
+    p_cmp.add_argument("--width", type=int, default=None, help="required for csv/usb_raw, optional for hdf5")
+    p_cmp.add_argument("--height", type=int, default=None, help="required for csv/usb_raw, optional for hdf5")
+    p_cmp.add_argument("--tick-ns", type=float, default=12.5, help="timestamp tick length in ns (for hdf5 time conversion)")
+    p_cmp.add_argument(
+        "--hdf5-plugin-path",
+        default=None,
+        help="optional HDF5 plugin dir (for OpenEB compressed HDF5)",
+    )
     p_cmp.add_argument("--batch-events", type=int, default=1_000_000)
     p_cmp.add_argument("--progress", action="store_true", help="show a progress bar (tqdm)")
     p_cmp.add_argument("--hide-on", action="store_true", help="hide ON events")

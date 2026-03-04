@@ -66,7 +66,7 @@ class BafOp:
                 if ts != 0 and ts >= t0:
                     has_neighbor = True
                     break
-            if has_neighbor:
+            if has_neighbor:    #双重 break：找到即退出，优化性能
                 break
 
         # Always update self timestamp

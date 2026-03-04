@@ -106,6 +106,8 @@ def _accumulate_raw_gray(
     raw_step: int,
     show_on: bool,
     show_off: bool,
+    flip_x: bool,
+    flip_y: bool,
 ) -> None:
     """In-place raw-gray accumulation (Qt-like)."""
 
@@ -130,6 +132,10 @@ def _accumulate_raw_gray(
     # Correct accumulation even with repeated indices.
     # `np.add.at` is C-optimized and handles duplicates properly.
     h, w = gray.shape
+    if flip_x:
+        x = (w - 1) - x
+    if flip_y:
+        y = (h - 1) - y
     idx = (y * w + x).astype(np.int64, copy=False)
     dv = np.where(p > 0, int(raw_step), -int(raw_step)).astype(np.int16, copy=False)
     flat = gray.reshape(-1)
@@ -221,6 +227,8 @@ def view_stream(
     out_video: str | None = None,
     video_fps: float | None = None,
     no_gui: bool = False,
+    flip_x: bool = False,
+    flip_y: bool = False,
 ) -> None:
     if mode == "fps" and fps <= 0:
         raise ValueError("fps must be > 0")
@@ -251,6 +259,7 @@ def view_stream(
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
 
     vw = None
+    wrote_frames = 0
     if out_video:
         import os
 
@@ -272,6 +281,8 @@ def view_stream(
     t0_wall = None
 
     def flush() -> None:
+        nonlocal frame_count, t0_wall, wrote_frames
+
         gray_u8 = gray.astype(np.uint8, copy=False)
         # Render display image
         if color == "gray":
@@ -287,6 +298,7 @@ def view_stream(
 
         if vw is not None:
             vw.write(disp_bgr)
+            wrote_frames += 1
 
         if not no_gui:
             cv2.imshow(window_name, disp_bgr)
@@ -310,7 +322,6 @@ def view_stream(
 
         # Optional: try to play at the requested FPS in wall-clock time.
         # This does NOT guarantee 60fps if rendering/accumulation is too slow.
-        nonlocal frame_count, t0_wall
         frame_count += 1
         if realtime and mode == "fps":
             import time
@@ -342,7 +353,15 @@ def view_stream(
 
                     end = int(min(n, start + remain))
                     sub = EventBatch(t=b.t[start:end], x=b.x[start:end], y=b.y[start:end], p=b.p[start:end])
-                    _accumulate_raw_gray(gray, sub, raw_step=raw_step, show_on=show_on, show_off=show_off)
+                    _accumulate_raw_gray(
+                        gray,
+                        sub,
+                        raw_step=raw_step,
+                        show_on=show_on,
+                        show_off=show_off,
+                        flip_x=flip_x,
+                        flip_y=flip_y,
+                    )
                     acc_n += (end - start)
                     start = end
 
@@ -356,40 +375,92 @@ def view_stream(
             if frame_end is None:
                 frame_end = int(t[0]) + int(frame_dt_ticks)
 
-            start = 0
-            while start < t.shape[0]:
-                # If there is a big timestamp gap, fast-forward to the next frame
-                # that actually contains events, instead of rendering tons of empty
-                # frames (which looks like a frozen image).
-                if int(t[start]) >= int(frame_end):
-                    dt = int(frame_dt_ticks)
-                    if dt <= 0:
-                        break
-                    # Move frame_end to the first frame end AFTER t[start]
-                    skips = (int(t[start]) - int(frame_end)) // dt
-                    frame_end += (skips + 1) * dt
-                    continue
+            # Fast path for monotonic timestamps (typical for EVTQ/HDF5):
+            # avoid Python per-event scanning by using vectorized boundary search.
+            if t.shape[0] <= 1 or bool(np.all(t[1:] >= t[:-1])):
+                start = 0
+                n_t = int(t.shape[0])
+                dt = int(frame_dt_ticks)
+                while start < n_t:
+                    # If there is a big timestamp gap, fast-forward to the next
+                    # frame that actually contains events, instead of rendering
+                    # tons of empty frames (which looks like a frozen image).
+                    if int(t[start]) >= int(frame_end):
+                        if dt <= 0:
+                            break
+                        skips = (int(t[start]) - int(frame_end)) // dt
+                        frame_end += (skips + 1) * dt
+                        continue
 
-                end = start
-                while end < t.shape[0] and int(t[end]) < int(frame_end):
-                    end += 1
+                    end = int(start + np.searchsorted(t[start:], np.uint64(frame_end), side="left"))
 
-                if end > start:
-                    sub = EventBatch(t=t[start:end], x=b.x[start:end], y=b.y[start:end], p=b.p[start:end])
-                    _accumulate_raw_gray(gray, sub, raw_step=raw_step, show_on=show_on, show_off=show_off)
+                    if end > start:
+                        sub = EventBatch(t=t[start:end], x=b.x[start:end], y=b.y[start:end], p=b.p[start:end])
+                        _accumulate_raw_gray(
+                            gray,
+                            sub,
+                            raw_step=raw_step,
+                            show_on=show_on,
+                            show_off=show_off,
+                            flip_x=flip_x,
+                            flip_y=flip_y,
+                        )
 
-                if end < t.shape[0]:
-                    flush()
-                    frame_end += int(frame_dt_ticks)
-                    start = end
-                else:
-                    start = end
+                    if end < n_t:
+                        flush()
+                        frame_end += dt
+                        start = end
+                    else:
+                        start = end
+            else:
+                # Fallback for rare out-of-order batches.
+                start = 0
+                while start < t.shape[0]:
+                    if int(t[start]) >= int(frame_end):
+                        dt = int(frame_dt_ticks)
+                        if dt <= 0:
+                            break
+                        skips = (int(t[start]) - int(frame_end)) // dt
+                        frame_end += (skips + 1) * dt
+                        continue
+
+                    end = start
+                    while end < t.shape[0] and int(t[end]) < int(frame_end):
+                        end += 1
+
+                    if end > start:
+                        sub = EventBatch(t=t[start:end], x=b.x[start:end], y=b.y[start:end], p=b.p[start:end])
+                        _accumulate_raw_gray(
+                            gray,
+                            sub,
+                            raw_step=raw_step,
+                            show_on=show_on,
+                            show_off=show_off,
+                            flip_x=flip_x,
+                            flip_y=flip_y,
+                        )
+
+                    if end < t.shape[0]:
+                        flush()
+                        frame_end += int(frame_dt_ticks)
+                        start = end
+                    else:
+                        start = end
 
         flush()
     except KeyboardInterrupt:
         pass
     finally:
+        import os
+
         if vw is not None:
             vw.release()
+            # Avoid leaving a misleading empty/placeholder file when export failed
+            # before any frame could be written (e.g. HDF5 decode/plugin issues).
+            if out_video and wrote_frames == 0 and os.path.exists(out_video):
+                try:
+                    os.remove(out_video)
+                except OSError:
+                    pass
         if not no_gui:
             cv2.destroyWindow(window_name)

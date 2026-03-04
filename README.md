@@ -5,9 +5,10 @@
 - 解析输入：
   - `.evtq`（Qt 解析后事件流二进制）
   - `.csv`（Qt 解析后事件流文本：t,x,y,p）
+  - `.hdf5/.h5`（支持 OpenEB / Prophesee HDF5：`/CD/events`）
   - `usb_raw.raw`（USB 原始 EVT3 风格 32-bit word 流，按你的 `EvtParserWorker::parseWordColumn()` 位域解析）
 - 去噪：实现与 Qt 对齐的 8 种方法（可参数化）
-- 保存：把去噪后的事件流保存为 `.evtq` 或 `.csv`
+- 保存：把去噪后的事件流保存为 `.evtq` / `.csv` / `.hdf5`
 - 显示：按“目标帧率”或“每帧事件数”输出预览，支持极性彩色/二值彩色/配色方案
 - 评估：提供基础统计 + 可扩展的指标框架（TP/FP 需要你提供标签或参考真值）
 
@@ -28,37 +29,95 @@ conda activate myevs
 ```powershell
 conda create -n myevs python=3.11 -y
 conda activate myevs
-conda install -c conda-forge numpy opencv tqdm -y
+conda install -c conda-forge numpy opencv tqdm h5py -y
 pip install -e .
 ```
 
 说明：
 - 本工程默认时间基准：**1 tick = 12.5ns**。
 - 事件文件中的 `t` 是 **tick**，但所有去噪参数仍然按 Qt UI 的 **us** 输入；程序会自动转换。
+- 对 OpenEB/Prophesee HDF5（通常 `t` 为 us）：程序会自动转成 tick 再进入后续算法。
+- 注释：若读取 OpenEB 压缩 HDF5 失败，可设置 `HDF5_PLUGIN_PATH`，或直接在命令里传 `--hdf5-plugin-path`。
+
+插件移植建议（Windows/Linux + conda）：
+- OpenEB 压缩 HDF5 依赖 ECF 解码插件（Windows 常见：`H5Zecf.dll` / `hdf5_ecf_codec.dll`；Linux 常见：`libh5zecf.so` / `libhdf5_ecf_codec.so`）。
+- Windows 推荐放到：`%CONDA_PREFIX%\Library\hdf5\plugin`。
+- Linux 推荐放到：`${CONDA_PREFIX}/lib/hdf5/plugin`（或 `${CONDA_PREFIX}/lib64/hdf5/plugin`）。
+- myEVS 会优先自动查找上述环境目录；找到后通常无需每次再写 `--hdf5-plugin-path`。
+- 也可直接把插件随工程放在相对路径：`Library/hdf5/plugin`（仓库根目录下，Linux/Windows 都可）。
+- 读取 HDF5 时，myevs 会尝试把该目录自动同步到当前环境插件目录（不可写时回退为直接使用工程目录）。
+- 可选：通过环境变量 `MYEVS_HDF5_PLUGIN_DIR` 指定自定义插件目录。
+
+Linux 服务器最小迁移步骤（推荐）：
+
+```bash
+# 1) 把 OpenEB 的 ECF .so 放进项目（便于和代码一起迁移）
+mkdir -p Library/hdf5/plugin
+cp /path/to/openeb/build/lib/hdf5/plugin/*.so Library/hdf5/plugin/
+
+# 2) 激活环境后直接运行（myevs 会自动发现/同步）
+conda activate myevs
+myevs stats --in data/prophesee_hand/prophesee_hand.hdf5
+```
+
+若你的服务器目录权限受限，不能写 conda 环境目录，可显式指定：
+
+```bash
+export MYEVS_HDF5_PLUGIN_DIR=/abs/path/to/Library/hdf5/plugin
+# 或
+export HDF5_PLUGIN_PATH=/abs/path/to/Library/hdf5/plugin
+```
 
 ## 快速使用
 
 ### 1) 解析 / 转换
 
-- 读取 USB raw 并转成 evtq：
+- 读取 USB raw 并转成 evtq / hdf5：
 
 ```powershell
 myevs convert-usb-raw --in usb_raw.raw --out out.evtq --width 640 --height 512
+myevs convert-usb-raw --in usb_raw.raw --out out.hdf5 --width 640 --height 512
+myevs convert-usb-raw --in data\30WEVS_hand\hand2.raw --out data\30WEVS_hand\hand2.hdf5 --width 640 --height 512
 myevs convert-usb-raw --in data/usb_raw_20260130_223313.raw --out data/usb_evtq.evtq --width 640 --height 512
 ```
 
 说明：Python 解析器不依赖后缀名，`.raw/.bin` 都可以；只要文件内容是同一份 USB 原始 32-bit word 流即可。
 
-- evtq 转 csv：
+- evtq/hdf5/csv 互转：
 
 ```powershell
 myevs convert --in in.evtq --out out.csv
+myevs convert --in in.evtq --out out.hdf5
+myevs convert --in in.hdf5 --out out.evtq
+myevs convert --in data\prophesee_hand\prophesee_hand.hdf5 --out data\prophesee_hand\prophesee_hand.hdf5.evtq
 ```
+
+- Prophesee raw 先转 hdf5，再直接用 myevs：
+
+```powershell
+# 1) OpenEB: raw -> hdf5
+D:\software\openeb-new\build\bin\Release\metavision_file_to_hdf5.exe -i data\prophesee_hand\prophesee_hand.raw
+
+# 2) myEVS 直接读取 hdf5（会自动处理 OpenEB 的 /CD/events）
+myevs stats --in data\prophesee_hand\prophesee_hand.hdf5 --hdf5-plugin-path D:\software\openeb-new\build\lib\hdf5\plugin
+myevs view --in data\prophesee_hand\prophesee_hand.hdf5 --hdf5-plugin-path D:\software\openeb-new\build\lib\hdf5\plugin --mode fps --fps 60 --color onoff --scheme 1 --no-hold
+
+myevs view --in data\prophesee_hand\prophesee_hand.hdf5 --hdf5-plugin-path D:\software\openeb-new\build\lib\hdf5\plugin --mode fps --fps 30 --color onoff --scheme 1 --no-hold --out-video data\prophesee_hand\prophesee_hand.mp4 --no-gui
+
+myevs view --in data\prophesee_hand\prophesee_hand.hdf5 --hdf5-plugin-path D:\software\openeb-new\build\lib\hdf5\plugin --mode fps --fps 30 --color onoff --scheme 1 --no-hold --rotate-180 --out-video data\prophesee_hand\prophesee_hand_rot180.mp4 --no-gui --rotate-180 #翻转180°
+
+myevs view --in data\30WEVS_hand\hand2.hdf5 --hdf5-plugin-path D:\software\openeb-new\build\lib\hdf5\plugin --mode fps --fps 30 --color onoff --scheme 1 --no-hold
+```
+
+注释：
+- 若画面左右/上下都反了，可加 `--rotate-180`（等价于 `--flip-x --flip-y`）。
+- 若漏传 `--hdf5-plugin-path` 导致 HDF5 解码失败，导出会报错且不会保留有效视频文件；旧版本遗留的极小 mp4（如几百字节）通常不可播放。
 
 ### 2) 去噪并保存
 
 ```powershell
 myevs denoise --in in.evtq --out denoised.evtq --method 3 --time-us 2000 --min-neighbors 50 --refractory-us 2000
+myevs denoise --in in.hdf5 --out denoised.hdf5 --method 3 --time-us 2000 --min-neighbors 50 --refractory-us 2000
 myevs denoise --in data\usb_evtq.evtq --out data\denoised_method3.evtq --method 3 --time-us 2000 --min-neighbors 50 --refractory-us 2000
 ```
 
@@ -104,6 +163,7 @@ myevs sweep --in in.evtq --method 1 --param time-us --values 200,500,1000,2000,5
 
 ```powershell
 myevs view --in denoised.evtq --mode fps --fps 60 --color onoff --scheme 1
+myevs view --in denoised.hdf5 --mode fps --fps 60 --color onoff --scheme 1
 
 myevs view --in data\usb_raw_20260130_223313.raw --width 640 --height 512 --mode fps --fps 60 --color onoff --scheme 1
 myevs view --in data\usb_evtq.evtq --mode fps --fps 60 --color onoff --scheme 1 --no-hold
@@ -135,6 +195,38 @@ myevs view --in data\usb_evtq.evtq --mode fps --fps 60 --color onoff --scheme 1 
 - 出帧规则：`--mode fps`（按事件时间切帧）或 `--mode events`（每 N 个事件一帧）
 - 颜色模式：`--color onoff`（极性彩色）或 `--color gray`（灰度）
 - 配色：`--scheme 0/1`，以及 `--binary`、`--deadzone`、`--no-hold` 都同样生效
+- 方向修正：`--flip-x`（左右镜像）、`--flip-y`（上下镜像）、`--rotate-180`（旋转 180°）
+
+与 Prophesee 官方播放观感不一致时（更想看“清晰 + 噪声明显”）：
+- 一键参数：`--style prophesee`（只调整可视化风格，不改变时间采样；默认播放速度和体积更稳定）
+- 建议参数：`--binary --deadzone 0 --raw-step 20 --scheme 0 --no-hold`
+- HDF5 输入通常不需要时间戳解包，建议加 `--no-unwrap-ts` 提升播放流畅度
+- 说明：该风格对噪声和边缘更敏感，视频压缩效率会变差，文件通常更大
+- 若想在体积/流畅度间平衡，建议 `--fps 30 --video-fps 30`
+
+如果你希望“噪声更明显/细节更密”，可以再手动切到事件分帧（会显著增大帧数与文件体积）：
+- `--mode events --events-per-frame 50000`
+
+```powershell
+# 推荐：插件已按上文部署时，通常无需再传 --hdf5-plugin-path
+myevs view --in data\prophesee_hand\prophesee_hand.hdf5 --style prophesee
+
+# Linux（仅当自动发现失败时）
+# myevs view --in data/prophesee_hand/prophesee_hand.hdf5 --hdf5-plugin-path /path/to/openeb/build/lib/hdf5/plugin --style prophesee
+
+# Windows（仅当自动发现失败时）
+# myevs view --in data\prophesee_hand\prophesee_hand.hdf5 --hdf5-plugin-path D:\software\openeb-new\build\lib\hdf5\plugin --style prophesee
+
+myevs view --in data\prophesee_hand\prophesee_hand.hdf5 --hdf5-plugin-path D:\software\openeb-new\build\lib\hdf5\plugin --style prophesee --rotate-180 --fps 30 --out-video data\prophesee_hand\prophesee_hand_style.mp4 --no-gui --video-fps 30
+```
+
+注释：
+- `--mode fps` 下，导出视频时长≈原始采集时长（本示例数据约 5 秒），不是按导出耗时计算。
+- 若想慢放，请让 `--video-fps` 小于 `--fps`（例如下例约 3x 慢放）：
+
+```powershell
+myevs view --in data\prophesee_hand\prophesee_hand.hdf5 --hdf5-plugin-path D:\software\openeb-new\build\lib\hdf5\plugin --style prophesee --rotate-180 --fps 30 --out-video data\prophesee_hand\prophesee_hand_style_slow.mp4 --no-gui --video-fps 10
+```
 
 如果用 `--mode events` 导出视频，建议显式指定输出视频帧率（否则默认用 `--fps`）：
 
@@ -365,4 +457,10 @@ myevs compare-stats --in-a "$OUT_PATH/input.evtq" --in-b "$OUT_PATH/stc_best.evt
 
 # ====== 5) 导出去噪后视频（不弹窗）======
 myevs view --in "$OUT_PATH/stc_best.evtq" --mode fps --fps 60 --color onoff --scheme 1 --no-hold --out-video "$OUT_PATH/stc_best.mp4" --no-gui --progress
+```
+
+# prophesee相机数据采集指令及类型转换
+```python
+metavision_viewer.exe -o data.raw #输出为raw文件 空格键开始录制，再次空格停止录制
+metavision_file_to_csv.exe -i data.raw -o data.csv # 转换为csv格式文件
 ```

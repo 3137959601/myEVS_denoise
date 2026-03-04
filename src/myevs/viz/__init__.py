@@ -29,6 +29,8 @@ def view_stream(
 	out_video: str | None = None,
 	video_fps: float | None = None,
 	no_gui: bool = False,
+	flip_x: bool = False,
+	flip_y: bool = False,
 ) -> None:
 	from .viewer import view_stream as _impl
 
@@ -53,4 +55,6 @@ def view_stream(
 		out_video=out_video,
 		video_fps=video_fps,
 		no_gui=no_gui,
+		flip_x=flip_x,
+		flip_y=flip_y,
 	)
