@@ -16,6 +16,8 @@ from .baf import BafOp
 from .ratelimit import RateLimitOp
 from .dp import DpOp
 from .globalgate import GlobalGateOp
+from .fastdecay import FastDecayOp
+from .ebf import EbfOp
 
 __all__ = [
     "DenoiseOp",
@@ -26,4 +28,6 @@ __all__ = [
     "RateLimitOp",
     "DpOp",
     "GlobalGateOp",
+    "FastDecayOp",
+    "EbfOp",
 ]

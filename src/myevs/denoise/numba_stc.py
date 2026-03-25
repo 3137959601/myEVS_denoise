@@ -78,14 +78,13 @@ def _build_stc_kernel():
 
             idx0 = yi * w + xi
 
-            # IMPORTANT: always update, even if we drop
-            last[idx0] = np.uint64(ti)
-
-            # Fast paths match Python version
-            if need <= 1:
+            # Fast paths
+            if need <= 0:
+                last[idx0] = np.uint64(ti)
                 keep[i] = 1
                 continue
             if win_ticks <= 0:
+                last[idx0] = np.uint64(ti)
                 continue
 
             t0 = ti - win_ticks if ti > win_ticks else 0
@@ -105,17 +104,25 @@ def _build_stc_kernel():
                 x1 = w - 1
 
             cnt = 0
+            found = False
             for yy in range(y0, y1 + 1):
                 base = yy * w
                 for xx in range(x0, x1 + 1):
+                    if xx == xi and yy == yi:
+                        continue
                     ts = int(last[base + xx])
                     if ts != 0 and ts >= t0:
                         cnt += 1
                         if cnt >= need:
-                            keep[i] = 1
+                            found = True
                             break
-                if keep[i] == 1:
+                if found:
                     break
+
+            # IMPORTANT: always update, even if we drop
+            last[idx0] = np.uint64(ti)
+            if found:
+                keep[i] = 1
 
         return keep
 

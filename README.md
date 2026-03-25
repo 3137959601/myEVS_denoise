@@ -6,6 +6,7 @@
   - `.evtq`（Qt 解析后事件流二进制）
   - `.csv`（Qt 解析后事件流文本：t,x,y,p）
   - `.hdf5/.h5`（支持 OpenEB / Prophesee HDF5：`/CD/events`）
+  - `.aedat/.aedat2`（AEDAT-2.0：int32 address + int32 timestamp，常见 tick=1us；支持 v2e/jAER 风格 DVS 极性事件）
   - `usb_raw.raw`（USB 原始 EVT3 风格 32-bit word 流，按你的 `EvtParserWorker::parseWordColumn()` 位域解析）
 - 去噪：实现与 Qt 对齐的 8 种方法（可参数化）
 - 保存：把去噪后的事件流保存为 `.evtq` / `.csv` / `.hdf5`
@@ -90,6 +91,16 @@ myevs convert --in in.evtq --out out.csv
 myevs convert --in in.evtq --out out.hdf5
 myevs convert --in in.hdf5 --out out.evtq
 myevs convert --in data\prophesee_hand\prophesee_hand.hdf5 --out data\prophesee_hand\prophesee_hand.hdf5.evtq
+
+# AEDAT2（例如 DND21 数据集）
+myevs stats --in D:\hjx_workspace\scientific_reserach\dataset\DND21\driving\driving.aedat --progress
+myevs convert --in D:\hjx_workspace\scientific_reserach\dataset\DND21\driving\driving.aedat --out data\dnd21_driving.evtq --progress
+myevs view --in D:\hjx_workspace\scientific_reserach\dataset\DND21\driving\driving.aedat --mode fps --fps 60 --color onoff --scheme 1 --no-hold
+myevs view --in D:\hjx_workspace\scientific_reserach\dataset\DND21\driving\driving.aedat --style prophesee 
+myevs view --in D:\hjx_workspace\scientific_reserach\dataset\DND21\hotel-bar\hotel-bar-segment.aedat --style prophesee 
+myevs view --in D:\hjx_workspace\scientific_reserach\dataset\DND21\hotel-bar\Davis346mini-2017-04-29T16-04-39+0200-00000004-0_CNE_bar_2017.aedat --mode fps --fps 60 --color onoff --scheme 1 --no-hold
+# 若自动推断分辨率失败，可显式指定（DND21 driving 为 346x260）
+myevs stats --in D:\hjx_workspace\scientific_reserach\dataset\DND21\driving\driving.aedat --width 346 --height 260 --assume aedat2 --progress
 ```
 
 - Prophesee raw 先转 hdf5，再直接用 myevs：
@@ -284,8 +295,95 @@ myevs plot-csv --in data\sweep_hotpixel.csv --out data\sweep_hotpixel_events.png
 
 ## 关于 TP/FP、SNR
 
-- TP/FP 需要你提供“哪些事件是真实信号”的标签（例如 ROI + 时间区间、或来自高质量基准数据）。
-- 工程里已留出 `myevs.metrics` 与 `myevs.labels` 的接口，你可以很容易接入你的标注策略。
+这一节解释本工程里 `myevs roc`/ROC CSV 中各项指标的**精确定义**，避免和不同论文/不同工具的口径混淆。
+
+### 1) 评估对象：把“事件去噪”当作二分类
+
+`myevs roc` 的输入是两条流：
+
+- clean：参考“干净”事件流（理想情况下接近 signal-only）
+- noisy：含噪事件流（signal + noise）
+
+对 noisy（或 denoised 输出）里的每一个事件，会先贴一个 **ground truth 标签**：
+
+- signal：能在 clean 中找到“匹配”的事件
+- noise：在 clean 中找不到匹配
+
+然后 denoiser 给出 **预测**（是否保留这个事件）：
+
+- kept：算法保留（出现在输出流）
+- dropped：算法丢弃（不出现在输出流）
+
+最终会得到混淆矩阵（TP/FP/TN/FN）以及 ROC/AUC、precision/accuracy/F1 等指标。
+
+### 2) 标签匹配：`--match-us` / `--match-bin-radius` 的含义
+
+`myevs roc` 默认用 (t,x,y,p) 做**精确匹配**。如果你传了 `--match-us > 0`，则会启用“时间容忍匹配”（只影响评估标注，不影响去噪本身）：
+
+- 对 noisy 事件 (x,y,p,t)，去 clean 里找 (x,y,p,tc)，并要求 |t-tc| 大约在 `match_us` 范围内。
+
+实现上是“时间分箱 + 邻 bin 查询”的近似：
+
+- `t_bin = t // match_ticks`（其中 `match_ticks = us_to_ticks(match_us)`）
+- `--match-bin-radius` 控制是否额外检查相邻分箱（0 表示只查本 bin；1 表示查 ±1；以此类推）
+
+注意：在事件密度很高（heavy 噪声）时，`match_us` 过大或 `match_bin_radius` 过大，会显著增加“偶然匹配”的概率，把 noise 误标成 signal，从而造成指标虚高。
+
+### 3) ROC 口径：`--roc-convention paper` vs `noise-drop`
+
+同一套 totals/kept 统计，可以有两种常见口径。本工程通过 `--roc-convention` 显式选择：
+
+#### (A) `paper`（默认，推荐科研对齐）
+
+- 正类（positive）= signal
+- 预测为正（predicted positive）= kept
+
+混淆矩阵含义：
+
+- TP = signal_kept（信号被保留）
+- FP = noise_kept（噪声被保留）
+- TN = noise_dropped（噪声被去除）
+- FN = signal_dropped（信号被误删）
+
+对应指标：
+
+- TPR = TP/(TP+FN) = signal_kept/signal_total（信号召回率，越大越好）
+- FPR = FP/(FP+TN) = noise_kept/noise_total（噪声保留率，越小越好）
+- precision = TP/(TP+FP)（“保留下来的事件里有多少是真信号”，越大越好）
+- accuracy = (TP+TN)/(TP+FP+TN+FN)（总体分类准确率）
+- F1 = 2*precision*TPR/(precision+TPR)（正类为 signal 的 F1；此处 recall=TPR）
+
+在这个口径下，ROC 通常画的是：x=FPR（noise_kept/noise_total），y=TPR（signal_kept/signal_total），AUC 越大越好。
+
+#### (B) `noise-drop`（旧口径，主要用于兼容/直觉“噪声去除率”）
+
+- 正类（positive）= noise
+- 预测为正（predicted positive）= dropped
+
+混淆矩阵含义：
+
+- TP = noise_dropped
+- FP = signal_dropped
+- TN = signal_kept
+- FN = noise_kept
+
+对应指标：
+
+- TPR = noise_dropped/noise_total（噪声去除率/噪声拒绝率，越大越好）
+- FPR = signal_dropped/signal_total（信号损失率，越小越好）
+
+注意：在这个口径下，precision/F1 的“正类”也变成 noise（且预测正是 dropped），和 `paper` 完全不同。
+
+### 4) ROC CSV 各列对应关系（`myevs roc --out-csv`）
+
+`myevs roc` 输出的 ROC CSV 中常用列含义：
+
+- `signal_total/noise_total`：noisy 流里被标注为 signal/noise 的总数
+- `signal_kept/noise_kept`：denoised 输出里（被保留的）signal/noise 数
+- `tp/fp/tn/fn`、`tpr/fpr/precision/accuracy/f1`：由 `--roc-convention` 决定具体语义（见上文）
+- `auc`：对所有 sweep 点的 (fpr,tpr) 用梯形法积分得到的 AUC（默认会补齐 (0,0)/(1,1) 端点）
+
+如果你要做“跨噪声等级”的公平对比，建议除了 AUC 以外，同时报告：固定 signal recall（TPR）下的 noise_kept（或 noise_kept/noise_total）。
 
 ## 一键实验脚本（推荐科研用）
 
@@ -464,3 +562,20 @@ myevs view --in "$OUT_PATH/stc_best.evtq" --mode fps --fps 60 --color onoff --sc
 metavision_viewer.exe -o data.raw #输出为raw文件 空格键开始录制，再次空格停止录制
 metavision_file_to_csv.exe -i data.raw -o data.csv # 转换为csv格式文件
 ```
+
+# match-us的含义
+--match-us 的作用不是“把一段时间内触发的所有事件都当成真实信号”，而是在做指标评估时，用来允许 clean/noisy 两条流之间存在时间抖动/偏移的“匹配容忍度”。
+
+具体是这样用的（只影响 myevs roc 的标注/统计，不影响去噪本身）：
+对 noisy（或 denoised）里的每一个事件 (x,y,p,t)，去 clean 里找有没有同一像素同一极性的事件 (x,y,p,tc)，并且时间“足够近”
+如果存在这样的 clean 事件，就把这个 noisy 事件标成 signal；否则标成 noise。
+“足够近”由 --match-us 决定：你可以把它理解成“允许时间对齐误差的阈值”。
+举个例子：
+clean 有事件：(x=10,y=20,p=ON,t=1,000,000 μs)
+noisy 里对应事件因为 v2e 抖动变成：t=1,000,050 μs
+--match-us 0（精确匹配）会认为它不在 clean 里 → 标成 noise（会把信号错当噪声）
+--match-us 1000 会认为 50μs 的偏移可接受 → 标成 signal
+再强调一次区别，避免混淆：
+--time-us（比如 BAF 的时间窗）= 算法参数，决定“去噪怎么做”
+--match-us = 评估参数，决定“算 TP/FP/ROC 时怎么把 noisy 事件贴 signal/noise 标签”
+另外我当前实现是“时间分箱 + 相邻 bin（±1）”的快速近似，所以 match-us=1000 表示“约 1ms 量级的容忍”（边界附近可能会略放宽一点）。

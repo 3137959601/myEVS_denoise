@@ -6,10 +6,13 @@ import csv
 from dataclasses import replace
 from typing import Iterator
 
+import numpy as np
+
 from .denoise import DenoiseConfig, denoise_stream
 from .events import EventBatch, filter_visibility_batches, unwrap_tick_batches
 from .io.auto import open_events
 from .io.csv_events import write_csv_events
+from .io.aedat2_events import write_aedat2, write_aedat2_passthrough
 from .io.evtq import write_evtq
 from .io.hdf5_events import write_hdf5
 from .stats import compute_stats
@@ -17,11 +20,16 @@ from .timebase import TimeBase
 
 
 def _add_common_in(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--in", dest="in_path", required=True, help="input path (.evtq/.csv/.hdf5/.bin)")
+    parser.add_argument(
+        "--in",
+        dest="in_path",
+        required=True,
+        help="input path (.evtq/.csv/.hdf5/.h5/.aedat/.bin/.npy/.npz)",
+    )
     parser.add_argument(
         "--assume",
         default=None,
-        choices=["evtq", "csv", "hdf5", "usb_raw_evt3"],
+        choices=["evtq", "csv", "hdf5", "aedat2", "usb_raw_evt3", "npy", "npz"],
         help="override input kind (omit to auto-detect)",
     )
     parser.add_argument("--width", type=int, default=640, help="required for csv/usb_raw, optional for hdf5")
@@ -103,7 +111,11 @@ def cmd_convert(args) -> int:
         write_hdf5(out_path, meta, batches, tick_ns=float(getattr(args, "tick_ns", 12.5)))
         return 0
 
-    raise SystemExit("--out must end with .evtq, .csv, .hdf5 or .h5")
+    if ext in (".aedat", ".aedat2"):
+        write_aedat2(out_path, meta, batches, tick_ns=float(getattr(args, "tick_ns", 12.5)), dst_tick_us=1.0)
+        return 0
+
+    raise SystemExit("--out must end with .evtq, .csv, .hdf5/.h5 or .aedat/.aedat2")
 
 
 def cmd_denoise(args) -> int:
@@ -148,7 +160,11 @@ def cmd_denoise(args) -> int:
         write_hdf5(out_path, meta, den, tick_ns=float(tb.tick_ns))
         return 0
 
-    raise SystemExit("--out must end with .evtq, .csv, .hdf5 or .h5")
+    if ext in (".aedat", ".aedat2"):
+        write_aedat2(out_path, meta, den, tick_ns=float(tb.tick_ns), dst_tick_us=1.0)
+        return 0
+
+    raise SystemExit("--out must end with .evtq, .csv, .hdf5/.h5 or .aedat/.aedat2")
 
 
 def cmd_view(args) -> int:
@@ -416,6 +432,341 @@ def cmd_sweep(args) -> int:
     return 0
 
 
+def cmd_roc(args) -> int:
+    """Compute ROC points and AUC against a clean reference.
+
+    ROC convention is controlled by --roc-convention.
+    - paper: positive=signal, predicted positive=kept (matches most papers)
+    - noise-drop: positive=noise, predicted positive=drop (legacy)
+    """
+
+    from .metrics.roc_auc import (
+        Kept,
+        auc_trapz,
+        build_clean_index,
+        compute_kept_for_denoised,
+        compute_totals_for_noisy,
+        confusion_from_totals,
+        signal_mask,
+    )
+
+    tb = TimeBase(tick_ns=float(args.tick_ns))
+
+    roc_conv = str(getattr(args, "roc_convention", "paper") or "paper").strip().lower()
+    if roc_conv not in ("paper", "noise-drop"):
+        raise SystemExit(f"--roc-convention must be 'paper' or 'noise-drop' (got {roc_conv!r})")
+    if roc_conv == "paper":
+        print("roc convention: paper (positive=signal, predicted positive=kept)")
+    else:
+        print("roc convention: noise-drop (positive=noise, predicted positive=drop)")
+
+    match_us = int(getattr(args, "match_us", 0) or 0)
+    match_ticks = tb.us_to_ticks(match_us) if match_us > 0 else 0
+    match_bin_radius = int(getattr(args, "match_bin_radius", 1) or 0)
+
+    if match_ticks > 0:
+        print(f"label match: match_us={match_us}  match_ticks={match_ticks}  bin_radius={match_bin_radius}")
+    else:
+        print("label match: exact (t,x,y,p)")
+
+    show_on = not bool(getattr(args, "hide_on", False))
+    show_off = not bool(getattr(args, "hide_off", False))
+    unwrap_ts = bool(getattr(args, "unwrap_ts", True))
+    bits = str(getattr(args, "ts_bits", "auto"))
+    bits_i = int(bits) if bits.isdigit() else None
+
+    # Parse values list (comma-separated).
+    raw_vals = [x.strip() for x in str(args.values).split(",") if x.strip()]
+    if not raw_vals:
+        raise SystemExit("--values must be a comma-separated list")
+
+    p = str(args.param)
+    if p == "min-neighbors":
+        values: list[float] = [float(x) for x in raw_vals]
+    else:
+        values = [float(int(x)) for x in raw_vals]
+
+    # ---- Build clean index once ----
+    r_clean = open_events(
+        args.clean_path,
+        width=args.width,
+        height=args.height,
+        batch_events=args.batch_events,
+        tick_ns=float(args.tick_ns),
+        hdf5_plugin_path=getattr(args, "hdf5_plugin_path", None),
+        assume=args.assume,
+    )
+    clean_batches = _wrap_progress(
+        r_clean.batches,
+        enabled=bool(getattr(args, "progress", False)),
+        desc=f"roc clean: {os.path.basename(str(args.clean_path))}",
+    )
+    clean_keys, packer = build_clean_index(
+        r_clean.meta,
+        clean_batches,
+        show_on=show_on,
+        show_off=show_off,
+        unwrap_ts=unwrap_ts,
+        ts_bits=bits_i,
+        match_ticks=int(match_ticks),
+        match_bin_radius=int(match_bin_radius),
+    )
+
+    # ---- Compute noisy totals once (same for all sweep points) ----
+    r_noisy0 = open_events(
+        args.noisy_path,
+        width=args.width,
+        height=args.height,
+        batch_events=args.batch_events,
+        tick_ns=float(args.tick_ns),
+        hdf5_plugin_path=getattr(args, "hdf5_plugin_path", None),
+        assume=args.assume,
+    )
+    if int(r_noisy0.meta.width) != int(r_clean.meta.width) or int(r_noisy0.meta.height) != int(r_clean.meta.height):
+        raise SystemExit(
+            f"meta mismatch: clean={r_clean.meta.width}x{r_clean.meta.height}, noisy={r_noisy0.meta.width}x{r_noisy0.meta.height}"
+        )
+    noisy_batches0 = _wrap_progress(
+        r_noisy0.batches,
+        enabled=bool(getattr(args, "progress", False)),
+        desc=f"roc totals: {os.path.basename(str(args.noisy_path))}",
+    )
+    tot = compute_totals_for_noisy(
+        r_noisy0.meta,
+        noisy_batches0,
+        clean_keys=clean_keys,
+        packer=packer,
+        show_on=show_on,
+        show_off=show_off,
+        unwrap_ts=unwrap_ts,
+        ts_bits=bits_i,
+        match_ticks=int(match_ticks),
+        match_bin_radius=int(match_bin_radius),
+    )
+    print(f"noisy totals: events={tot.total}  signal={tot.signal}  noise={tot.noise}")
+
+    tag = str(getattr(args, "tag", "") or "").strip()
+    if not tag:
+        tag = os.path.splitext(os.path.basename(str(args.noisy_path)))[0]
+
+    rows: list[dict[str, object]] = []
+
+    save_dir = str(getattr(args, "save_denoised_dir", "") or "").strip()
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
+
+    # ---- Fast path for EBF score-threshold sweep (author-style) ----
+    # When param is the score threshold (min-neighbors), re-running the full denoise
+    # for each threshold is unnecessarily expensive. Because EBF updates its state
+    # regardless of keep/drop, the score sequence is independent of the threshold.
+    # So we can compute scores once, then derive kept counts for all thresholds.
+    method_token = str(getattr(args, "method", "") or "").strip().lower()
+    method_token = {
+        "10": "ebf",
+        "eventbasedfilter": "ebf",
+    }.get(method_token, method_token)
+    engine = str(getattr(args, "engine", "python") or "python").strip().lower()
+
+    if method_token == "ebf" and p == "min-neighbors" and engine == "python":
+        if save_dir:
+            raise SystemExit(
+                "EBF score-threshold sweep does not support --save-denoised-dir (would require writing one stream per threshold). "
+                "Omit --save-denoised-dir, or run per-threshold (slower) by sweeping a different parameter."
+            )
+
+        from .metrics.roc_ebf_threshold_sweep import compute_roc_rows_ebf_score_threshold_sweep
+
+        rows = compute_roc_rows_ebf_score_threshold_sweep(
+            noisy_path=str(args.noisy_path),
+            width=args.width,
+            height=args.height,
+            batch_events=int(args.batch_events),
+            tick_ns=float(args.tick_ns),
+            hdf5_plugin_path=getattr(args, "hdf5_plugin_path", None),
+            assume=args.assume,
+            progress=bool(getattr(args, "progress", False)),
+            tb=tb,
+            unwrap_ts=unwrap_ts,
+            ts_bits=bits_i,
+            show_on=show_on,
+            show_off=show_off,
+            clean_keys=clean_keys,
+            packer=packer,
+            match_ticks=int(match_ticks),
+            match_bin_radius=int(match_bin_radius),
+            tot=tot,
+            tag=tag,
+            method=str(args.method),
+            roc_convention=roc_conv,
+            match_us=int(match_us),
+            values=values,
+            time_us=int(args.time_us),
+            radius_px=int(args.radius_px),
+            refractory_us=int(args.refractory_us),
+            print_fn=print,
+        )
+
+    else:
+        for v in values:
+            # Re-open noisy each sweep point (stream is forward-only)
+            r = open_events(
+                args.noisy_path,
+                width=args.width,
+                height=args.height,
+                batch_events=args.batch_events,
+                tick_ns=float(args.tick_ns),
+                hdf5_plugin_path=getattr(args, "hdf5_plugin_path", None),
+                assume=args.assume,
+            )
+
+            cfg = DenoiseConfig(
+                method=args.method,
+                pipeline=None,
+                time_window_us=int(args.time_us),
+                radius_px=int(args.radius_px),
+                min_neighbors=float(args.min_neighbors),
+                refractory_us=int(args.refractory_us),
+                show_on=show_on,
+                show_off=show_off,
+            )
+
+            # Override one parameter.
+            if p == "time-us":
+                cfg = replace(cfg, time_window_us=int(v))
+            elif p == "radius-px":
+                cfg = replace(cfg, radius_px=int(v))
+            elif p == "min-neighbors":
+                cfg = replace(cfg, min_neighbors=float(v))
+            elif p == "refractory-us":
+                cfg = replace(cfg, refractory_us=int(v))
+            else:
+                raise SystemExit(f"Unknown param: {p}")
+
+            batches = _wrap_progress(
+                r.batches,
+                enabled=bool(getattr(args, "progress", False)),
+                desc=f"roc r={cfg.radius_px} {args.param}={v}",
+            )
+            if unwrap_ts:
+                batches = unwrap_tick_batches(batches, bits=bits_i)
+
+            den = denoise_stream(
+                r.meta,
+                batches,
+                cfg,
+                timebase=tb,
+                engine=str(getattr(args, "engine", "python")),
+            )
+
+            if save_dir:
+                # Write denoised output while it is being consumed for metrics.
+                v_str = str(v)
+                safe_v = "".join((c if (c.isalnum() or c in "._-") else "_") for c in v_str)
+                safe_tag = "".join((c if (c.isalnum() or c in "._-") else "_") for c in tag)
+                safe_method = "".join((c if (c.isalnum() or c in "._-") else "_") for c in str(args.method))
+                fname = f"{safe_tag}_{safe_method}_{p}_{safe_v}.aedat"
+                out_den = os.path.join(save_dir, fname)
+                den = write_aedat2_passthrough(out_den, r.meta, den, tick_ns=float(tb.tick_ns), dst_tick_us=1.0)
+
+            kept = compute_kept_for_denoised(
+                r.meta,
+                den,
+                clean_keys=clean_keys,
+                packer=packer,
+                match_ticks=int(match_ticks),
+                match_bin_radius=int(match_bin_radius),
+            )
+            conf = confusion_from_totals(tot, kept, roc_convention=roc_conv)
+
+            rows.append(
+                {
+                    "tag": tag,
+                    "method": str(args.method),
+                    "param": p,
+                    "value": v,
+                    "roc_convention": roc_conv,
+                    "match_us": match_us,
+                    "events_total": tot.total,
+                    "signal_total": tot.signal,
+                    "noise_total": tot.noise,
+                    "events_kept": kept.total,
+                    "signal_kept": kept.signal,
+                    "noise_kept": kept.noise,
+                    "tp": conf.tp,
+                    "fp": conf.fp,
+                    "tn": conf.tn,
+                    "fn": conf.fn,
+                    "tpr": conf.tpr,
+                    "fpr": conf.fpr,
+                    "precision": conf.precision,
+                    "accuracy": conf.accuracy,
+                    "f1": conf.f1,
+                }
+            )
+
+            print(
+                f"r={cfg.radius_px:>2} {p}={v:>8}  kept={kept.total:<10} "
+                f"tpr={conf.tpr:.6f} fpr={conf.fpr:.6f} "
+                f"tp={conf.tp} fp={conf.fp} tn={conf.tn} fn={conf.fn}"
+            )
+
+    fpr_arr = np.asarray([float(r["fpr"]) for r in rows], dtype=np.float64)
+    tpr_arr = np.asarray([float(r["tpr"]) for r in rows], dtype=np.float64)
+    auc = auc_trapz(fpr_arr, tpr_arr)
+    print(f"auc: {auc:.6f}")
+
+    if args.out_csv:
+        out_csv = str(args.out_csv)
+        os.makedirs(os.path.dirname(os.path.abspath(out_csv)), exist_ok=True)
+
+        append = bool(getattr(args, "append", False))
+        header = [
+                "tag",
+                "method",
+                "param",
+                "value",
+                "roc_convention",
+                "match_us",
+                "events_total",
+                "signal_total",
+                "noise_total",
+                "events_kept",
+                "signal_kept",
+                "noise_kept",
+                "tp",
+                "fp",
+                "tn",
+                "fn",
+                "tpr",
+                "fpr",
+                "precision",
+                "accuracy",
+                "f1",
+                "auc",
+            ]
+
+        if append and os.path.exists(out_csv) and os.path.getsize(out_csv) > 0:
+            with open(out_csv, "r", newline="", encoding="utf-8") as f0:
+                existing = next(csv.reader(f0), None)
+            if existing and existing != header:
+                raise SystemExit(
+                    "--append used but the existing CSV header differs from the current format. "
+                    "Delete the old file or use a new --out-csv path."
+                )
+
+        need_header = not (append and os.path.exists(out_csv) and os.path.getsize(out_csv) > 0)
+
+        mode = "a" if append else "w"
+        with open(out_csv, mode, newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            if need_header:
+                w.writerow(header)
+            for r in rows:
+                w.writerow([r.get(k, "") for k in header[:-1]] + [auc])
+
+    return 0
+
+
 def cmd_plot_csv(args) -> int:
     from .metrics.plot_csv import PlotConfig, plot_csv
 
@@ -449,25 +800,27 @@ def build_parser() -> argparse.ArgumentParser:
     p_conv = sub.add_parser("convert", help="convert between evtq/csv/hdf5 (input auto-detect)")
     _add_common_in(p_conv)
     p_conv.add_argument("--tick-ns", type=float, default=12.5, help="timestamp tick length in ns (for hdf5 time conversion)")
-    p_conv.add_argument("--out", dest="out_path", required=True, help="output .evtq/.csv/.hdf5")
+    p_conv.add_argument("--out", dest="out_path", required=True, help="output .evtq/.csv/.hdf5/.aedat")
     p_conv.set_defaults(func=cmd_convert)
 
     p_usb = sub.add_parser("convert-usb-raw", help="usb raw (.bin) -> evtq/csv/hdf5")
     _add_common_in(p_usb)
     p_usb.set_defaults(assume="usb_raw_evt3")
     p_usb.add_argument("--tick-ns", type=float, default=12.5, help="timestamp tick length in ns")
-    p_usb.add_argument("--out", dest="out_path", required=True, help="output .evtq/.csv/.hdf5")
+    p_usb.add_argument("--out", dest="out_path", required=True, help="output .evtq/.csv/.hdf5/.aedat")
     p_usb.set_defaults(func=cmd_convert)
 
     p_den = sub.add_parser("denoise", help="denoise and save")
     _add_common_in(p_den)
-    p_den.add_argument("--out", dest="out_path", required=True, help="output .evtq/.csv/.hdf5")
+    p_den.add_argument("--out", dest="out_path", required=True, help="output .evtq/.csv/.hdf5/.aedat")
     p_den.add_argument(
         "--method",
         default="none",
         help=(
             "Qt method id/name: 0 none, 1 stc, 2 refractory, 3 hotpixel, 4 baf, "
-            "5 combo(stc+refractory), 6 ratelimit, 7 globalgate, 8 dp"
+            "5 combo(stc+refractory), 6 ratelimit, 7 globalgate, 8 dp, "
+            "9 fastdecay (dv-processing FastDecayNoiseFilter; --time-us=half-life, --radius-px=subdivision, --min-neighbors=threshold), "
+            "10 ebf (Guo 2025; --time-us=tau, --radius-px=radius (TI25 uses 2), --min-neighbors=score-threshold)"
         ),
     )
     p_den.add_argument(
@@ -608,7 +961,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_cmp.add_argument(
         "--assume",
         default=None,
-        choices=["evtq", "csv", "hdf5", "usb_raw_evt3"],
+        choices=["evtq", "csv", "hdf5", "aedat2", "usb_raw_evt3", "npy", "npz"],
         help="override input kind for BOTH A/B (omit to auto-detect by extension)",
     )
     p_cmp.add_argument("--width", type=int, default=None, help="required for csv/usb_raw, optional for hdf5")
@@ -682,6 +1035,102 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_sw.add_argument("--out-csv", default=None, help="optional csv table path")
     p_sw.set_defaults(func=cmd_sweep)
+
+    p_roc = sub.add_parser("roc", help="sweep a denoise parameter and compute ROC/AUC vs a clean reference")
+    p_roc.add_argument("--clean", dest="clean_path", required=True, help="clean reference stream (.evtq/.csv/.hdf5/.aedat)")
+    p_roc.add_argument("--noisy", dest="noisy_path", required=True, help="noisy stream (.evtq/.csv/.hdf5/.aedat)")
+    p_roc.add_argument(
+        "--assume",
+        default=None,
+        choices=["evtq", "csv", "hdf5", "aedat2", "usb_raw_evt3", "npy", "npz"],
+        help="override input kind for BOTH clean/noisy (omit to auto-detect)",
+    )
+    p_roc.add_argument("--width", type=int, default=None, help="required for csv/usb_raw, optional for hdf5")
+    p_roc.add_argument("--height", type=int, default=None, help="required for csv/usb_raw, optional for hdf5")
+    p_roc.add_argument("--batch-events", type=int, default=1_000_000)
+    p_roc.add_argument(
+        "--hdf5-plugin-path",
+        default=None,
+        help="optional HDF5 plugin dir (for OpenEB compressed HDF5)",
+    )
+    p_roc.add_argument("--progress", action="store_true", help="show a progress bar (tqdm)")
+    p_roc.add_argument(
+        "--method",
+        default="stc",
+        help=(
+            "Denoise method id/name: 0 none, 1 stc, 2 refractory, 3 hotpixel, 4 baf, "
+            "5 combo(stc+refractory), 6 ratelimit, 7 globalgate, 8 dp, 9 fastdecay, 10 ebf"
+        ),
+    )
+    p_roc.add_argument(
+        "--param",
+        required=True,
+        choices=["time-us", "radius-px", "min-neighbors", "refractory-us"],
+        help="which parameter to sweep",
+    )
+    p_roc.add_argument(
+        "--values",
+        required=True,
+        help="comma-separated sweep values (min-neighbors accepts floats like 0.1,0.2,...)",
+    )
+    p_roc.add_argument(
+        "--engine",
+        choices=["python", "numba"],
+        default="python",
+        help="execution engine (numba currently accelerates STC/method=1 only)",
+    )
+    p_roc.add_argument("--tick-ns", type=float, default=12.5)
+    p_roc.add_argument("--time-us", type=int, default=2000)
+    p_roc.add_argument("--radius-px", type=int, default=1)
+    p_roc.add_argument("--min-neighbors", type=float, default=2)
+    p_roc.add_argument("--refractory-us", type=int, default=50)
+    p_roc.add_argument("--hide-on", action="store_true", help="hide ON events")
+    p_roc.add_argument("--hide-off", action="store_true", help="hide OFF events")
+    p_roc.add_argument(
+        "--no-unwrap-ts",
+        dest="unwrap_ts",
+        action="store_false",
+        help="disable timestamp unwrapping (wrap/epoch expansion)",
+    )
+    p_roc.add_argument(
+        "--ts-bits",
+        default="auto",
+        choices=["auto", "30", "32"],
+        help="wrapped timestamp bit width for unwrapping",
+    )
+    p_roc.add_argument("--tag", default=None, help="optional curve label (for grouping in plots)")
+    p_roc.add_argument(
+        "--roc-convention",
+        default="paper",
+        choices=["paper", "noise-drop"],
+        help=(
+            "ROC/TPR/FPR convention: paper=positive(signal), predicted positive(kept); "
+            "noise-drop=positive(noise), predicted positive(drop) (legacy)."
+        ),
+    )
+    p_roc.add_argument(
+        "--match-us",
+        type=int,
+        default=1000,
+        help="time tolerance (us) for labeling signal by matching against clean (0 = exact match)",
+    )
+    p_roc.add_argument(
+        "--match-bin-radius",
+        type=int,
+        default=1,
+        help=(
+            "tolerant-match bin neighborhood radius (0=only same time bin; 1=also check ±1 bins). "
+            "Only used when --match-us>0."
+        ),
+    )
+    p_roc.add_argument(
+        "--save-denoised-dir",
+        default=None,
+        help="optional dir to save denoised output (.aedat) for EACH sweep value",
+    )
+    p_roc.add_argument("--out-csv", default=None, help="output CSV path (recommended)")
+    p_roc.add_argument("--append", action="store_true", help="append rows to --out-csv if it exists")
+    p_roc.set_defaults(func=cmd_roc)
 
     p_pc = sub.add_parser("plot-csv", help="plot a CSV table into publication-style figure")
     p_pc.add_argument("--in", dest="in_csv", required=True, help="input csv path")

@@ -26,7 +26,9 @@ from .ops.base import Dims, DenoiseOp
 from .ops.baf import BafOp
 from .ops.dp import DpOp
 from .ops.globalgate import GlobalGateOp, keep_by_gate_factor
+from .ops.ebf import EbfOp
 from .ops.hotpixel import HotPixelOp
+from .ops.fastdecay import FastDecayOp
 from .ops.ratelimit import RateLimitOp
 from .ops.refractory import RefractoryOp
 from .ops.stc import StcOp
@@ -44,6 +46,8 @@ _METHOD_ID_TO_NAME = {
     6: "ratelimit",
     7: "globalgate",
     8: "dp",
+    9: "fastdecay",  # dv-processing FastDecayNoiseFilter (non-Qt)
+    10: "ebf",  # Guo 2025 EBF (non-Qt)
 }
 
 _NAME_TO_METHOD_ID = {v: k for k, v in _METHOD_ID_TO_NAME.items()}
@@ -72,9 +76,15 @@ def _normalize_method_token(token: str) -> str:
         "6": "ratelimit",
         "7": "globalgate",
         "8": "dp",
+        "9": "fastdecay",
+        "10": "ebf",
         "rate": "ratelimit",
         "global": "globalgate",
         "dg": "dp",
+        "fast_decay": "fastdecay",
+        "fast-decay": "fastdecay",
+        "fastdecaynoisefilter": "fastdecay",
+        "eventbasedfilter": "ebf",
     }
     if t in aliases:
         return aliases[t]
@@ -130,6 +140,10 @@ def _build_ops(meta: EventStreamMeta, cfg: DenoiseConfig, tb: TimeBase) -> tuple
             ops.append(RateLimitOp(dims, cfg, tb))
         elif t == "dp":
             ops.append(DpOp(dims, cfg, tb))
+        elif t == "fastdecay":
+            ops.append(FastDecayOp(dims, cfg, tb))
+        elif t == "ebf":
+            ops.append(EbfOp(dims, cfg, tb))
         else:
             raise ValueError(f"Unknown denoise method token: {t!r}")
 

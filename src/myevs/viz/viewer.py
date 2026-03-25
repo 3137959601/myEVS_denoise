@@ -136,6 +136,14 @@ def _accumulate_raw_gray(
         x = (w - 1) - x
     if flip_y:
         y = (h - 1) - y
+
+    in_range = (x >= 0) & (x < w) & (y >= 0) & (y < h)
+    if not bool(np.any(in_range)):
+        return
+    x = x[in_range]
+    y = y[in_range]
+    p = p[in_range]
+
     idx = (y * w + x).astype(np.int64, copy=False)
     dv = np.where(p > 0, int(raw_step), -int(raw_step)).astype(np.int16, copy=False)
     flat = gray.reshape(-1)
@@ -257,6 +265,10 @@ def view_stream(
 
     if not no_gui:
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        try:
+            cv2.resizeWindow(window_name, w, h)
+        except Exception:
+            pass
 
     vw = None
     wrote_frames = 0

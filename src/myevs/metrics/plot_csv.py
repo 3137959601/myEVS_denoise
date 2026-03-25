@@ -53,7 +53,9 @@ def _try_float(s: str) -> float | None:
 
 
 def read_csv_table(path: str) -> list[dict[str, str]]:
-    with open(path, "r", encoding="utf-8", newline="") as f:
+    # Use utf-8-sig to gracefully handle an optional UTF-8 BOM.
+    # This commonly occurs when CSVs are produced by Windows PowerShell Export-Csv.
+    with open(path, "r", encoding="utf-8-sig", newline="") as f:
         r = csv.DictReader(f)
         if not r.fieldnames:
             raise ValueError(f"CSV has no header: {path}")
@@ -135,6 +137,65 @@ def _auto_kind(*, x_is_numeric: bool, n_points: int) -> str:
     return "line" if n_points >= 2 else "scatter"
 
 
+_ROC_LINESTYLES: tuple[str, ...] = ("-", "--", "-.", ":")
+_ROC_MARKERS: tuple[str, ...] = ("o", "s", "^", "v", "D", "P", "X", "*", "+", "x")
+
+
+def _is_roc_xy(*, x: str, y: tuple[str, ...]) -> bool:
+    # Convention in this repo: ROC tables use columns named exactly fpr/tpr.
+    # Keep this check strict so other plots remain unaffected.
+    return x.strip().lower() == "fpr" and len(y) == 1 and y[0].strip().lower() == "tpr"
+
+
+def _add_roc_endpoints(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    # Ensure (0,0) and (1,1) are explicitly present so ROC curves look like
+    # standard paper plots (and match common plotting scripts).
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+
+    m = np.isfinite(x) & np.isfinite(y)
+    x = x[m]
+    y = y[m]
+
+    x = np.clip(x, 0.0, 1.0)
+    y = np.clip(y, 0.0, 1.0)
+
+    eps = 1e-12
+
+    def _has_point(x0: float, y0: float) -> bool:
+        if x.size == 0:
+            return False
+        return bool(np.any((np.abs(x - x0) <= eps) & (np.abs(y - y0) <= eps)))
+
+    if not _has_point(0.0, 0.0):
+        x = np.concatenate((x, np.array([0.0], dtype=np.float64)))
+        y = np.concatenate((y, np.array([0.0], dtype=np.float64)))
+
+    if not _has_point(1.0, 1.0):
+        x = np.concatenate((x, np.array([1.0], dtype=np.float64)))
+        y = np.concatenate((y, np.array([1.0], dtype=np.float64)))
+
+    return x, y
+
+
+def _auc_trapz_sorted(x: np.ndarray, y: np.ndarray) -> float:
+    """Trapezoidal AUC assuming x is sorted ascending."""
+
+    if x.size < 2 or y.size < 2 or x.size != y.size:
+        return 0.0
+
+    trapezoid = getattr(np, "trapezoid", None)
+    if trapezoid is not None:
+        return float(trapezoid(y=y, x=x))
+
+    trapz = getattr(np, "trapz", None)
+    if trapz is not None:
+        return float(trapz(y=y, x=x))
+
+    dx = x[1:] - x[:-1]
+    return float(np.sum(dx * (y[1:] + y[:-1]) * 0.5))
+
+
 def plot_csv(cfg: PlotConfig) -> str:
     """Plot CSV to cfg.out_path, return output path."""
 
@@ -162,9 +223,45 @@ def plot_csv(cfg: PlotConfig) -> str:
         kind = _auto_kind(x_is_numeric=x_is_numeric, n_points=len(rows))
 
     fig, ax = plt.subplots(figsize=cfg.figsize)
+    is_roc = _is_roc_xy(x=cfg.x, y=cfg.y)
 
-    def draw_series(series_rows: list[Mapping[str, str]], *, label_prefix: str | None = None) -> None:
+    def draw_series(
+        series_rows: list[Mapping[str, str]],
+        *,
+        label_prefix: str | None = None,
+        style_idx: int = 0,
+    ) -> None:
         if x_is_numeric:
+            # Special-case: ROC curves (tpr vs fpr) should include (0,0) and (1,1)
+            # endpoints to match standard paper plotting conventions.
+            if is_roc:
+                ycol = cfg.y[0]
+                x = _as_numeric(series_rows, cfg.x)
+                y = _as_numeric(series_rows, ycol)
+                x, y = _add_roc_endpoints(x, y)
+                order = np.argsort(x)
+                x = x[order]
+                y = y[order]
+
+                auc = _auc_trapz_sorted(x, y)
+                base_label = label_prefix if label_prefix is not None else ycol
+                label = f"{base_label}, AUC={auc:.3f}"
+
+                ls = _ROC_LINESTYLES[int(style_idx) % len(_ROC_LINESTYLES)]
+                mk = _ROC_MARKERS[int(style_idx) % len(_ROC_MARKERS)]
+
+                if kind == "line":
+                    ax.plot(x, y, linestyle=ls, marker=mk, label=label)
+                elif kind == "step":
+                    ax.step(x, y, where="mid", linestyle=ls, marker=mk, label=label)
+                elif kind == "scatter":
+                    ax.scatter(x, y, marker=mk, label=label)
+                elif kind == "bar":
+                    ax.bar(x, y, label=label)
+                else:
+                    raise ValueError(f"Unknown kind: {kind}")
+                return
+
             x = _as_numeric(series_rows, cfg.x)
             order = np.argsort(x)
             x = x[order]
@@ -196,7 +293,7 @@ def plot_csv(cfg: PlotConfig) -> str:
                     raise ValueError(f"Unknown kind: {kind}")
 
     if cfg.group is None:
-        draw_series(rows)
+        draw_series(rows, style_idx=0)
     else:
         # Group by column value
         groups: dict[str, list[Mapping[str, str]]] = {}
@@ -204,8 +301,8 @@ def plot_csv(cfg: PlotConfig) -> str:
             k = (r.get(cfg.group, "") or "").strip()
             groups.setdefault(k, []).append(r)
         # stable order
-        for g in sorted(groups.keys()):
-            draw_series(groups[g], label_prefix=(g if g else "(empty)"))
+        for i, g in enumerate(sorted(groups.keys())):
+            draw_series(groups[g], label_prefix=(g if g else "(empty)"), style_idx=i)
 
     if cfg.logx:
         ax.set_xscale("log")
@@ -229,7 +326,10 @@ def plot_csv(cfg: PlotConfig) -> str:
     ax.spines["right"].set_visible(False)
 
     if cfg.legend and (cfg.group is not None or len(cfg.y) > 1):
-        ax.legend(frameon=False)
+        if is_roc:
+            ax.legend(frameon=False, loc="lower right")
+        else:
+            ax.legend(frameon=False)
 
     out_path = str(cfg.out_path)
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
