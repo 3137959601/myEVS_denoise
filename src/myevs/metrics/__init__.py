@@ -16,3 +16,6 @@ be added here later.
 """
 
 from __future__ import annotations
+
+from .esr import event_structural_ratio_mean_from_xy
+from .aocc import aocc_from_xyt

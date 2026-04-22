@@ -3,11 +3,11 @@ channels:
   - conda-forge
 dependencies:
   - python>=3.10
-  - numpy
+  - numpy<2.5
   - opencv
   - tqdm
   - matplotlib
-  - numba
+  - numba>=0.64
   - h5py
   - pip
   - pip:

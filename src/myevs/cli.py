@@ -820,7 +820,8 @@ def build_parser() -> argparse.ArgumentParser:
             "Qt method id/name: 0 none, 1 stc, 2 refractory, 3 hotpixel, 4 baf, "
             "5 combo(stc+refractory), 6 ratelimit, 7 globalgate, 8 dp, "
             "9 fastdecay (dv-processing FastDecayNoiseFilter; --time-us=half-life, --radius-px=subdivision, --min-neighbors=threshold), "
-            "10 ebf (Guo 2025; --time-us=tau, --radius-px=radius (TI25 uses 2), --min-neighbors=score-threshold)"
+            "10 ebf (Guo 2025; --time-us=tau, --radius-px=radius (TI25 uses 2), --min-neighbors=score-threshold), "
+            "11 ebf_optimized (research; global adaptive noise normalization; --min-neighbors=normalized-threshold)"
         ),
     )
     p_den.add_argument(
@@ -1059,7 +1060,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="stc",
         help=(
             "Denoise method id/name: 0 none, 1 stc, 2 refractory, 3 hotpixel, 4 baf, "
-            "5 combo(stc+refractory), 6 ratelimit, 7 globalgate, 8 dp, 9 fastdecay, 10 ebf"
+            "5 combo(stc+refractory), 6 ratelimit, 7 globalgate, 8 dp, 9 fastdecay, 10 ebf, 11 ebf_optimized"
         ),
     )
     p_roc.add_argument(
