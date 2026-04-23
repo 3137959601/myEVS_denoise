@@ -10822,3 +10822,219 @@ delta（n170 相对 n153）：
 - `data/ED24/myPedestrain_06/EBF_Part2/_slim_n171_20260423_rhythm_compact400k/`
 - `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/segf1_n170_20260423_heavy_compact400k_s9_tau128.csv`
 - `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/segf1_n171_20260423_heavy_compact400k_s9_tau128.csv`
+
+### 24.35 公式可解释性与“数学美感”迭代（n172 / n173 / n174 / n175）
+
+问题背景（审稿视角）：
+
+1. n171 精度很强，但系数（0.35/0.55/0.20 等）看起来像经验调参，解释成本高；
+2. 用户关切点是：公式是否可自圆其说、是否可能过拟合单数据集、资源是否真的优于 n149。
+
+#### 24.35.1 从可解释建模出发的统一框架
+
+对每个事件，先定义局部证据与状态：
+
+$$
+E_s=\mathrm{raw}_{same},\quad E_o=\mathrm{raw}_{opp},\quad
+m=\frac{E_o}{E_s+E_o+\varepsilon},\quad
+u=\operatorname{clip}(1-dt_0/\tau,0,1),\quad
+s=s_{frac}
+$$
+
+再定义两个慢变量（都为标量，不是 per-pixel 数组）：
+
+1. 混极慢变量：\(\bar m\leftarrow \bar m + (m-\bar m)/N\)
+2. 翻转节律慢变量：\(r\leftarrow r+(r_{bad}-r)/N\), 其中 \(r_{bad}=\mathbf{1}[p_{prev}=-p]\cdot u\)
+
+统一打分结构写成：
+
+$$
+\mathrm{score}=
+\frac{\big(E_s+\lambda_oE_o\big)\cdot g_{sup}}
+{1+u_{eff}^2}
+$$
+
+各项作用：
+
+1. \(\lambda_o\)：决定 opposite 证据是否可信（纯度高、混极低、翻转低时才放行）；
+2. \(u_{eff}\)：中心 burst 抑制强度（burst 越强、混极/翻转越重，抑制越大；支持度高时抑制缓和）；
+3. \(g_{sup}\)：支持增强（在可信结构区放大分数，降低漏检）。
+
+这三个量对应三种可解释物理因素：`极性一致性`、`中心占据爆发`、`邻域结构支持`。
+
+#### 24.35.2 “美感化”公式的四个版本
+
+实现文件：
+
+- `src/myevs/denoise/ops/ebfopt_part2/n172_s52lite_minimal_gate_backbone.py`
+- `src/myevs/denoise/ops/ebfopt_part2/n173_s52lite_geomean_gate_backbone.py`
+- `src/myevs/denoise/ops/ebfopt_part2/n174_s52lite_balanced_gate_backbone.py`
+- `src/myevs/denoise/ops/ebfopt_part2/n175_s52lite_rational_gate_backbone.py`
+
+sweep 接入：
+
+- `scripts/ED24_alg_evalu/sweep_ebf_slim_labelscore_grid.py`（新增 `--variant n172/n173/n174/n175`）
+
+n172（最简乘法门控）：
+
+$$
+\lambda_o=(1-m)(1-\bar m)(1-r),\quad
+u_{eff}=u\frac{1+\bar m+r}{1+s},\quad
+g_{sup}=1+s
+$$
+
+n173（几何均值门控）：
+
+$$
+\lambda_o=\sqrt{(1-m)(1-\bar m)(1-r)},\quad
+u_{eff}=u\frac{1+\bar m+r}{1+s},\quad
+g_{sup}=1+s
+$$
+
+n174（加回支持包络，仍保持简系数）：
+
+$$
+\lambda_o=\big((1-m)(1-\bar m)(1-r)\big)^2,\quad
+u_{eff}=u\frac{1+\bar m+r}{1+s},\quad
+b\leftarrow b+\frac{u_{eff}-b}{N},\quad
+g_{sup}=1+b\,s(1-r)
+$$
+
+n175（保留 n171 骨架，但系数有理化）：
+
+$$
+\pi_r=\frac{r_{bad}+r}{2},\quad
+\alpha=(1-\bar m)^2\left(1-\frac{\pi_r}{3}\right)
+$$
+
+$$
+u_{eff}=u\cdot\operatorname{clip}(1-k_s s,0.25,1)\cdot\operatorname{clip}(1+k_m m,0.5,2)\cdot\operatorname{clip}\!\left(1+\frac{\pi_r}{2}-\frac{r_{good}}{4},0.5,1.75\right)
+$$
+
+$$
+\mathrm{score}_{175}=
+\frac{E_s+\alpha E_o}{1+u_{eff}^2}\cdot
+\operatorname{clip}\!\left(1+b s\left(1+\frac{r_{good}}{4}\right),1,2\right),\;
+b\leftarrow b+\frac{u_{eff}-b}{4096}
+$$
+
+其中 \(k_s=2/3,\;k_m=1/5\)，均为分数形式。
+
+#### 24.35.3 系数为什么是这样（n175 解释）
+
+1. \(\pi_r=(r_{bad}+r)/2\)：把“瞬时翻转冲击”和“慢变量背景”做等权平均，避免只看瞬时或只看历史；
+2. \(1-\pi_r/3\)：节律对 opposite 放行采用温和线性衰减，三分之一斜率保证在高翻转区仍有可恢复空间；
+3. \(1+\pi_r/2-r_{good}/4\)：翻转增加抑制，同极短间隔适度减抑（四分之一补偿），防止把连续边缘误杀；
+4. \(k_s=2/3,k_m=1/5\)：分别对应“支持主导、混极次要”的先验，避免 mix 项过强主导。
+
+与 n171 的关系：
+
+1. n175 不是盲目删项，而是把 n171 的经验小数改写为可解释分数；
+2. 保留了被验证有效的三慢变量结构（\(\bar m,r,b\)），因此不会像 n172~n174 一样明显掉点。
+
+#### 24.35.4 实验口径与命令（compact400k）
+
+- `max-events=400000`
+- `s in {5,7,9}`
+- `tau_us in {32000,64000,128000,256000}`
+- `esr-mode=off, aocc-mode=off`
+
+```powershell
+$env:PYTHONNOUSERSITE='1'
+
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/ED24_alg_evalu/sweep_ebf_slim_labelscore_grid.py `
+	--variant n172 --max-events 400000 --s-list 5,7,9 --tau-us-list 32000,64000,128000,256000 `
+	--esr-mode off --aocc-mode off `
+	--out-dir data/ED24/myPedestrain_06/EBF_Part2/_slim_n172_20260423_minimal_compact400k
+
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/ED24_alg_evalu/sweep_ebf_slim_labelscore_grid.py `
+	--variant n173 --max-events 400000 --s-list 5,7,9 --tau-us-list 32000,64000,128000,256000 `
+	--esr-mode off --aocc-mode off `
+	--out-dir data/ED24/myPedestrain_06/EBF_Part2/_slim_n173_20260423_geomean_compact400k
+
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/ED24_alg_evalu/sweep_ebf_slim_labelscore_grid.py `
+	--variant n174 --max-events 400000 --s-list 5,7,9 --tau-us-list 32000,64000,128000,256000 `
+	--esr-mode off --aocc-mode off `
+	--out-dir data/ED24/myPedestrain_06/EBF_Part2/_slim_n174_20260423_balanced_compact400k
+
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/ED24_alg_evalu/sweep_ebf_slim_labelscore_grid.py `
+	--variant n175 --max-events 400000 --s-list 5,7,9 --tau-us-list 32000,64000,128000,256000 `
+	--esr-mode off --aocc-mode off `
+	--out-dir data/ED24/myPedestrain_06/EBF_Part2/_slim_n175_20260423_rational_compact400k
+
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/noise_analyze/segment_f1.py `
+	--labeled-npy D:/hjx_workspace/scientific_reserach/dataset/ED24/myPedestrain_06/Pedestrain_06_3.3.npy `
+	--variant n175 --s 9 --tau-us 128000 --max-events 400000 --segment-events 200000 `
+	--roc-csv data/ED24/myPedestrain_06/EBF_Part2/_slim_n175_20260423_rational_compact400k/roc_ebf_n175_heavy_labelscore_s5_7_9_tau32_64_128_256ms.csv `
+	--out-csv data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/segf1_n175_20260423_heavy_compact400k_s9_tau128.csv
+```
+
+#### 24.35.5 结果对比（主指标）
+
+| variant | mean AUC | mean F1 | heavy best-F1 |
+|---|---:|---:|---:|
+| n149（2.8） | 0.944325 | **0.846442** | 0.769616 |
+| n171（原节律增强） | 0.944352 | 0.845923 | 0.769356 |
+| n172（极简） | 0.939684 | 0.837053 | 0.752097 |
+| n173（几何均值） | 0.940819 | 0.836604 | 0.749735 |
+| n174（平衡） | 0.938197 | 0.834724 | 0.749086 |
+| n175（分数化） | **0.944419** | 0.846265 | **0.770240** |
+
+delta（n175 相对 n171）：
+
+- `mean AUC +0.000067`
+- `mean F1 +0.000342`
+- `heavy best-F1 +0.000884`
+
+delta（n175 相对 n149）：
+
+- `mean AUC +0.000094`
+- `mean F1 -0.000177`
+- `heavy best-F1 +0.000624`
+
+解读：
+
+1. 只追求“极简美感”（n172~n174）会显著掉精度，尤其 heavy；
+2. 分数化后的 n175 基本保住了 n171 的结构优势，并在 heavy 上超过 n149；
+3. n149 仍保有极轻微 mean F1 优势（`+0.000177`），但差距已很小。
+
+#### 24.35.6 heavy 分段（2×200k；s=9,tau=128ms）
+
+| variant | seg0 F1 | seg0 noise_kept_rate | seg1 F1 | seg1 noise_kept_rate |
+|---|---:|---:|---:|---:|
+| n149 | 0.801081 | 0.026633 | 0.673548 | 0.012224 |
+| n171 | 0.808525 | 0.035938 | 0.681473 | 0.020441 |
+| n175 | **0.809358** | 0.036300 | **0.682493** | 0.020618 |
+
+分段 delta（n175 相对 n171）：
+
+1. seg0：`F1 +0.000833`
+2. seg1：`F1 +0.001020`
+
+说明：n175 在两个 segment 都继续抬升 F1，代价是噪声保留率小幅上升。
+
+#### 24.35.7 资源占用（n149 vs n175）
+
+分辨率：`346×260`, `npx=89960`
+
+| variant | 持久数组 | bytes | KiB |
+|---|---|---:|---:|
+| n149 | `last_ts(uint64)` + `last_pol(int8)` + `hot_state(int32)` | 1,169,480 | 1,142.070 |
+| n175 | `last_ts(uint64)` + `last_pol(int8)` | 809,640 | 790.664 |
+| 节省 | 去掉 dense `hot_state` | 359,840 | 351.406 |
+
+结论：n175 与 n171 一样，维持了相对 n149 的大幅内存节省（约 `351.4 KiB`）。
+
+#### 24.35.8 关于泛化风险的诚实结论
+
+1. 本轮所有变体都在同一 compact400k 协议下、同一固定常量下完成，无按场景单独调参；
+2. n175 在 light/mid/heavy 三档都保持稳定，但**尚未在新数据集做外部验证**，泛化风险仍客观存在；
+3. 若走论文路线，建议下一步固定 n175 常量后，在独立数据集直接复评，不做回调参。
+
+产物目录：
+
+- `data/ED24/myPedestrain_06/EBF_Part2/_slim_n172_20260423_minimal_compact400k/`
+- `data/ED24/myPedestrain_06/EBF_Part2/_slim_n173_20260423_geomean_compact400k/`
+- `data/ED24/myPedestrain_06/EBF_Part2/_slim_n174_20260423_balanced_compact400k/`
+- `data/ED24/myPedestrain_06/EBF_Part2/_slim_n175_20260423_rational_compact400k/`
+- `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/segf1_n175_20260423_heavy_compact400k_s9_tau128.csv`

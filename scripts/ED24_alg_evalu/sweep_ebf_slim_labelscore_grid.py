@@ -2327,6 +2327,54 @@ def _score_stream(
             tb=tb,
             scores_out=scores,
         )
+    if v in {"n172", "ebf_n172", "ebfn172"}:
+        from myevs.denoise.ops.ebfopt_part2.n172_s52lite_minimal_gate_backbone import score_stream_n172
+
+        return score_stream_n172(
+            ev,
+            width=int(width),
+            height=int(height),
+            radius_px=int(radius_px),
+            tau_us=int(tau_us),
+            tb=tb,
+            scores_out=scores,
+        )
+    if v in {"n173", "ebf_n173", "ebfn173"}:
+        from myevs.denoise.ops.ebfopt_part2.n173_s52lite_geomean_gate_backbone import score_stream_n173
+
+        return score_stream_n173(
+            ev,
+            width=int(width),
+            height=int(height),
+            radius_px=int(radius_px),
+            tau_us=int(tau_us),
+            tb=tb,
+            scores_out=scores,
+        )
+    if v in {"n174", "ebf_n174", "ebfn174"}:
+        from myevs.denoise.ops.ebfopt_part2.n174_s52lite_balanced_gate_backbone import score_stream_n174
+
+        return score_stream_n174(
+            ev,
+            width=int(width),
+            height=int(height),
+            radius_px=int(radius_px),
+            tau_us=int(tau_us),
+            tb=tb,
+            scores_out=scores,
+        )
+    if v in {"n175", "ebf_n175", "ebfn175"}:
+        from myevs.denoise.ops.ebfopt_part2.n175_s52lite_rational_gate_backbone import score_stream_n175
+
+        return score_stream_n175(
+            ev,
+            width=int(width),
+            height=int(height),
+            radius_px=int(radius_px),
+            tau_us=int(tau_us),
+            tb=tb,
+            scores_out=scores,
+        )
     if v in {"n107", "ebf_n107", "ebfn107"}:
         from myevs.denoise.ops.ebfopt_part2.n107_projected_energy_backbone import score_stream_n107
 
@@ -2341,7 +2389,7 @@ def _score_stream(
         )
 
     raise SystemExit(
-        f"unknown variant: {variant!r}. supported: ebf | s52 | s55 | s60 | s61 | s62 | s63 | s64 | s65 | s66 | s67 | s68 | s69 | s70 | s71 | s72 | s73 | s74 | s75 | s76 | s77 | s78 | s79 | s80 | s81 | s82 | s83 | s84 | s85 | s86 | s87 | n1 | n2 | n3 | n4 | n5 | n6 | n7 | n71 | n72 | n8 | n81 | n82 | n83 | n84 | n85 | n86 | n87 | n88 | n89 | n90 | n91 | n92 | n93 | n94 | n95 | n96 | n97 | n98 | n99 | n100 | n101 | n102 | n103 | n104 | n105 | n106 | n107 | n108 | n109 | n110 | n111 | n112 | n113 | n114 | n116 | n117 | n118 | n120 | n121 | n123 | n124 | n125 | n126 | n127 | n128 | n129 | n131 | n132 | n133 | n134 | n135 | n137 | n139 | n140 | n141 | n142 | n143 | n144 | n145 | n146 | n147 | n148 | n149 | n150 | n151 | n152 | n153 | n160 | n161 | n162 | n170 | n171"
+        f"unknown variant: {variant!r}. supported: ebf | s52 | s55 | s60 | s61 | s62 | s63 | s64 | s65 | s66 | s67 | s68 | s69 | s70 | s71 | s72 | s73 | s74 | s75 | s76 | s77 | s78 | s79 | s80 | s81 | s82 | s83 | s84 | s85 | s86 | s87 | n1 | n2 | n3 | n4 | n5 | n6 | n7 | n71 | n72 | n8 | n81 | n82 | n83 | n84 | n85 | n86 | n87 | n88 | n89 | n90 | n91 | n92 | n93 | n94 | n95 | n96 | n97 | n98 | n99 | n100 | n101 | n102 | n103 | n104 | n105 | n106 | n107 | n108 | n109 | n110 | n111 | n112 | n113 | n114 | n116 | n117 | n118 | n120 | n121 | n123 | n124 | n125 | n126 | n127 | n128 | n129 | n131 | n132 | n133 | n134 | n135 | n137 | n139 | n140 | n141 | n142 | n143 | n144 | n145 | n146 | n147 | n148 | n149 | n150 | n151 | n152 | n153 | n160 | n161 | n162 | n170 | n171 | n172 | n173 | n174 | n175"
     )
 
 
@@ -2382,7 +2430,7 @@ def main() -> int:
     ap.add_argument(
         "--variant",
         default="ebf",
-        help="ebf | s52 | s55 | s60 | s61 | s62 | s63 | s64 | s65 | s66 | s67 | s68 | s69 | s70 | s71 | s72 | s73 | s74 | s75 | s76 | s77 | s78 | s79 | s80 | s81 | s82 | s83 | s84 | s85 | s86 | s87 | n1 | n2 | n3 | n4 | n5 | n6 | n7 | n71 | n72 | n8 | n81 | n82 | n83 | n84 | n85 | n86 | n87 | n88 | n89 | n90 | n91 | n92 | n93 | n94 | n95 | n96 | n97 | n98 | n99 | n100 | n101 | n102 | n103 | n104 | n105 | n106 | n107 | n108 | n109 | n110 | n111 | n112 | n113 | n114 | n116 | n117 | n118 | n120 | n121 | n123 | n124 | n125 | n126 | n127 | n128 | n129 | n131 | n132 | n133 | n134 | n135 | n137 | n139 | n140 | n141 | n142 | n143 | n144 | n145 | n146 | n147 | n148 | n149 | n150 | n151 | n152 | n153 | n160 | n161 | n162 | n170 | n171",
+        help="ebf | s52 | s55 | s60 | s61 | s62 | s63 | s64 | s65 | s66 | s67 | s68 | s69 | s70 | s71 | s72 | s73 | s74 | s75 | s76 | s77 | s78 | s79 | s80 | s81 | s82 | s83 | s84 | s85 | s86 | s87 | n1 | n2 | n3 | n4 | n5 | n6 | n7 | n71 | n72 | n8 | n81 | n82 | n83 | n84 | n85 | n86 | n87 | n88 | n89 | n90 | n91 | n92 | n93 | n94 | n95 | n96 | n97 | n98 | n99 | n100 | n101 | n102 | n103 | n104 | n105 | n106 | n107 | n108 | n109 | n110 | n111 | n112 | n113 | n114 | n116 | n117 | n118 | n120 | n121 | n123 | n124 | n125 | n126 | n127 | n128 | n129 | n131 | n132 | n133 | n134 | n135 | n137 | n139 | n140 | n141 | n142 | n143 | n144 | n145 | n146 | n147 | n148 | n149 | n150 | n151 | n152 | n153 | n160 | n161 | n162 | n170 | n171 | n172 | n173 | n174 | n175",
     )
     ap.add_argument("--max-events", type=int, default=int(os.environ.get("EBF_MAX_EVENTS", "0")), help="0=all")
     ap.add_argument("--out-dir", default="data/ED24/myPedestrain_06/EBF_Part2/_slim", help="output directory")
@@ -2789,12 +2837,24 @@ def main() -> int:
     elif v in {"n171", "ebf_n171", "ebfn171"}:
         roc_prefix = "roc_ebf_n171"
         tag_prefix = "ebf_n171"
+    elif v in {"n172", "ebf_n172", "ebfn172"}:
+        roc_prefix = "roc_ebf_n172"
+        tag_prefix = "ebf_n172"
+    elif v in {"n173", "ebf_n173", "ebfn173"}:
+        roc_prefix = "roc_ebf_n173"
+        tag_prefix = "ebf_n173"
+    elif v in {"n174", "ebf_n174", "ebfn174"}:
+        roc_prefix = "roc_ebf_n174"
+        tag_prefix = "ebf_n174"
+    elif v in {"n175", "ebf_n175", "ebfn175"}:
+        roc_prefix = "roc_ebf_n175"
+        tag_prefix = "ebf_n175"
     elif v in {"n107", "ebf_n107", "ebfn107"}:
         roc_prefix = "roc_ebf_n107"
         tag_prefix = "ebf_n107"
     else:
         raise SystemExit(
-            f"unknown --variant: {args.variant!r}. choices: ebf | s52 | s55 | s60 | s61 | s62 | s63 | s64 | s65 | s66 | s67 | s68 | s69 | s70 | s71 | s72 | s73 | s74 | s75 | s76 | s77 | s78 | s79 | s80 | s81 | s82 | s83 | s84 | s85 | s86 | s87 | n1 | n2 | n3 | n4 | n5 | n6 | n7 | n71 | n72 | n8 | n81 | n82 | n83 | n84 | n85 | n86 | n87 | n88 | n89 | n90 | n91 | n92 | n93 | n94 | n95 | n96 | n97 | n98 | n99 | n100 | n101 | n102 | n103 | n104 | n105 | n106 | n107 | n108 | n109 | n110 | n111 | n112 | n113 | n114 | n116 | n117 | n118 | n120 | n121 | n123 | n124 | n125 | n126 | n127 | n128 | n129 | n131 | n132 | n133 | n134 | n135 | n137 | n139 | n140 | n141 | n142 | n143 | n144 | n145 | n146 | n147 | n148 | n149 | n150 | n151 | n152 | n153 | n160 | n161 | n162 | n170 | n171"
+            f"unknown --variant: {args.variant!r}. choices: ebf | s52 | s55 | s60 | s61 | s62 | s63 | s64 | s65 | s66 | s67 | s68 | s69 | s70 | s71 | s72 | s73 | s74 | s75 | s76 | s77 | s78 | s79 | s80 | s81 | s82 | s83 | s84 | s85 | s86 | s87 | n1 | n2 | n3 | n4 | n5 | n6 | n7 | n71 | n72 | n8 | n81 | n82 | n83 | n84 | n85 | n86 | n87 | n88 | n89 | n90 | n91 | n92 | n93 | n94 | n95 | n96 | n97 | n98 | n99 | n100 | n101 | n102 | n103 | n104 | n105 | n106 | n107 | n108 | n109 | n110 | n111 | n112 | n113 | n114 | n116 | n117 | n118 | n120 | n121 | n123 | n124 | n125 | n126 | n127 | n128 | n129 | n131 | n132 | n133 | n134 | n135 | n137 | n139 | n140 | n141 | n142 | n143 | n144 | n145 | n146 | n147 | n148 | n149 | n150 | n151 | n152 | n153 | n160 | n161 | n162 | n170 | n171 | n172 | n173 | n174 | n175"
         )
 
     out_dir = str(args.out_dir)
