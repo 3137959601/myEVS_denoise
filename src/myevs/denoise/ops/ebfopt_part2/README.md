@@ -1,6 +1,6 @@
 ﻿# EBF Part2（精度提升方向）实验记录
 
-日期：2026-04-22
+日期：2026-04-23
 
 ## 顶部快照（7.82 时间跨度 + 自激率，Heavy 高分子集）
 
@@ -10254,4 +10254,571 @@ delta（相对 n149）：
 
 - `data/ED24/myPedestrain_06/EBF_Part2/_slim_n151_795_recurrence_compact400k/`
 
-（已将 2026-04-22 的 n149/n150 重跑数据分别合并回 24.24 与 24.29，不再单独保留 24.31 小节。）
+### 24.31 继续迭代 n150：n152（support/mix 自适应中心代理，零新增状态）
+
+目标（按当前 README 策略）：
+
+1. 保持 n150 的持久状态规模不变（不新增 per-pixel 表）；
+2. 仅改中心抑制项形状，尝试在同资源前提下提升 n150 精度；
+3. 评测口径保持 compact400k + heavy 2×200k 分段。
+
+#### 24.31.1 新算法定义（n152）
+
+实现文件：
+
+- `src/myevs/denoise/ops/ebfopt_part2/n152_n150_supportmix_center_proxy_backbone.py`
+
+sweep 接入：
+
+- `scripts/ED24_alg_evalu/sweep_ebf_slim_labelscore_grid.py`（新增 `--variant n152`）
+
+相对 n150 的核心改动：
+
+1. 保留 `u_lite(dt0)` 作为中心代理基项；
+2. 用当前事件已有的 `sfrac`（同极性支持比例）与 `mix`（同/异极性混合度）对 `u_lite` 做软调制；
+3. 不引入任何新增持久状态数组。
+
+#### 24.31.2 原理与公式
+
+n152 沿用 n150 的主证据与 opp 门控：
+
+$$
+\mathrm{raw}_{\mathrm{gated}} = \mathrm{raw}_{\mathrm{same}} + \alpha_{\mathrm{eff}}\,\mathrm{raw}_{\mathrm{opp}},
+\quad
+\alpha_{\mathrm{eff}}=(1-m)^2,
+\quad
+m\leftarrow m+\frac{\mathrm{mix}_i-m}{N},\;N=4096
+$$
+
+$$
+\mathrm{mix}_i=\frac{\mathrm{raw}_{\mathrm{opp}}}{\mathrm{raw}_{\mathrm{same}}+\mathrm{raw}_{\mathrm{opp}}+\varepsilon}
+$$
+
+中心代理基项仍为：
+
+$$
+u_{\mathrm{lite}}=\operatorname{clip}\left(1-\frac{dt_0}{\tau},0,1\right)
+$$
+
+新增的软调制项：
+
+$$
+\mathrm{relief}=\operatorname{clip}(1-k_{\mathrm{sfrac}}\,s_{\mathrm{frac}},0.25,1.0),
+\quad
+\mathrm{mix\_gain}=\operatorname{clip}(1+k_{\mathrm{mix}}\,\mathrm{mix},0.5,2.0)
+$$
+
+$$
+u_{\mathrm{eff}}=\operatorname{clip}\left(u_{\mathrm{lite}}\cdot \mathrm{relief}\cdot \mathrm{mix\_gain},0,1\right)
+$$
+
+最终打分：
+
+$$
+b\leftarrow b+\frac{u_{\mathrm{eff}}-b}{N},
+\quad
+\mathrm{score}=\frac{\mathrm{raw}_{\mathrm{gated}}}{1+u_{\mathrm{eff}}^2}\cdot(1+b\,s_{\mathrm{frac}})
+$$
+
+默认参数（可由环境变量覆盖）：
+
+- `MYEVS_N152_SIGMA=2.8`
+- `MYEVS_N152_BETA_INIT=0.65`
+- `MYEVS_N152_K_SFRAC=0.45`
+- `MYEVS_N152_K_MIX=0.35`
+
+#### 24.31.3 复杂度与状态占用（346x260）
+
+复杂度：
+
+1. 邻域主复杂度仍为 `O(r^2)`；
+2. 相对 n150 仅增加常数级标量运算（`relief/mix_gain/u_eff` 的几次乘加与 clamp）。
+
+状态占用：
+
+1. 与 n150 完全相同：`last_ts(uint64)` + `last_pol(int8)` + 2 个全局标量；
+2. 持久状态总量仍约 `790.7 KiB`；
+3. 相对 n149 仍节省约 `351.4 KiB`（未回退 dense hot_state）。
+
+#### 24.31.4 实验口径（compact400k 同口径）
+
+- `max-events=400000`
+- `s in {5,7,9}`
+- `tau_us in {32000,64000,128000,256000}`
+- `esr-mode=off, aocc-mode=off`
+
+执行命令（本轮）：
+
+```powershell
+$env:PYTHONNOUSERSITE='1'
+
+# n152-a
+$env:MYEVS_N152_SIGMA='2.8'
+$env:MYEVS_N152_BETA_INIT='0.65'
+$env:MYEVS_N152_K_SFRAC='0.45'
+$env:MYEVS_N152_K_MIX='0.35'
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/ED24_alg_evalu/sweep_ebf_slim_labelscore_grid.py `
+	--variant n152 --max-events 400000 --s-list 5,7,9 --tau-us-list 32000,64000,128000,256000 `
+	--esr-mode off --aocc-mode off `
+	--out-dir data/ED24/myPedestrain_06/EBF_Part2/_slim_n152_20260422_suppmix_compact400k
+
+# n152-b（推荐）
+$env:MYEVS_N152_K_SFRAC='0.65'
+$env:MYEVS_N152_K_MIX='0.20'
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/ED24_alg_evalu/sweep_ebf_slim_labelscore_grid.py `
+	--variant n152 --max-events 400000 --s-list 5,7,9 --tau-us-list 32000,64000,128000,256000 `
+	--esr-mode off --aocc-mode off `
+	--out-dir data/ED24/myPedestrain_06/EBF_Part2/_slim_n152_20260422_k065_m020_compact400k
+
+# heavy 2×200k 分段（n152-b）
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/noise_analyze/segment_f1.py `
+	--labeled-npy D:/hjx_workspace/scientific_reserach/dataset/ED24/myPedestrain_06/Pedestrain_06_3.3.npy `
+	--variant n152 --s 9 --tau-us 128000 --max-events 400000 --segment-events 200000 `
+	--roc-csv data/ED24/myPedestrain_06/EBF_Part2/_slim_n152_20260422_k065_m020_compact400k/roc_ebf_n152_heavy_labelscore_s5_7_9_tau32_64_128_256ms.csv `
+	--out-csv data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/segf1_n152_20260422_heavy_compact400k_s9_tau128.csv
+```
+
+#### 24.31.5 参数小扫与结果（n152）
+
+本轮在同一结构下做两组参数：
+
+| variant | sigma | beta_init | k_sfrac | k_mix | mean AUC | mean F1 | heavy best-F1 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| n152-a | 2.8 | 0.65 | 0.45 | 0.35 | 0.943206 | 0.843361 | 0.764564 |
+| n152-b（推荐） | 2.8 | 0.65 | 0.65 | 0.20 | 0.943115 | 0.843963 | 0.766029 |
+
+对比（2026-04-22 同口径）：
+
+| variant | mean AUC | mean F1 | heavy best-F1 |
+|---|---:|---:|---:|
+| n149（sigma=2.8） | **0.944325** | **0.846442** | **0.769616** |
+| n150（sigma=2.8,beta=0.65） | 0.943065 | 0.843447 | 0.764715 |
+| n152-b（本轮） | 0.943115 | 0.843963 | 0.766029 |
+
+delta（n152-b 相对 n150）：
+
+- `mean AUC +0.000050`
+- `mean F1 +0.000516`
+- `heavy best-F1 +0.001314`
+
+delta（n152-b 相对 n149）：
+
+- `mean AUC -0.001210`
+- `mean F1 -0.002479`
+- `heavy best-F1 -0.003587`
+
+#### 24.31.6 heavy 分段（2×200k；s=9,tau=128ms）
+
+阈值取各自 heavy best-F1 operating point：
+
+| variant | seg0 F1 | seg0 noise_kept_rate | seg1 F1 | seg1 noise_kept_rate |
+|---|---:|---:|---:|---:|
+| n150（sigma=2.8,beta=0.65） | 0.797646 | 0.026608 | 0.660070 | 0.012478 |
+| n152-b | 0.804880 | 0.035851 | 0.678182 | 0.019376 |
+
+分段解读：
+
+1. n152-b 在 seg0/seg1 都抬升了 F1（尤其 seg1）；
+2. 提升主要来自 recall 回升，同时 noise_kept_rate 也回升，说明它不是“更保守”，而是“减小了过抑制”；
+3. 与 24.29.5b 的结论一致：n150 的瓶颈在 `u_lite(dt0)` 过粗；n152 通过同资源软调制，能部分修复该问题。
+
+#### 24.31.7 结论
+
+1. 这轮达成了“同资源提精度”：n152-b 在不增加状态占用的前提下，稳定超过 n150（mean F1 与 heavy best-F1 均提升）；
+2. 但 n152 仍未达到 n149（精度主线）水平，说明仅靠 `dt0 + (sfrac,mix)` 软调制仍不够；
+3. 下一步若继续 7.94 轻量路线，建议沿 n152 做“更强但仍无新增状态”的代理（例如分段 LUT 形状或轻量二值节律码），优先继续修复 seg1。
+
+产物目录：
+
+- `data/ED24/myPedestrain_06/EBF_Part2/_slim_n152_20260422_suppmix_compact400k/`
+- `data/ED24/myPedestrain_06/EBF_Part2/_slim_n152_20260422_k065_m020_compact400k/`
+- `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/segf1_n152_20260422_heavy_compact400k_s9_tau128.csv`
+
+### 24.32 继续迭代：n153（固定代理形状，减少超参数）
+
+动机（针对“超参数过多”）：
+
+1. n152-b 虽然优于 n150，但用户侧需要额外管理 `k_sfrac/k_mix`（再加 `beta_init/sigma`），调参负担偏重；
+2. 本轮目标是把 n152-b 的有效形状“蒸馏”为固定版，在不损失精度的前提下减少可调超参数。
+
+#### 24.32.1 新算法定义（n153）
+
+实现文件：
+
+- `src/myevs/denoise/ops/ebfopt_part2/n153_n152_fixedproxy_backbone.py`
+
+sweep 接入：
+
+- `scripts/ED24_alg_evalu/sweep_ebf_slim_labelscore_grid.py`（新增 `--variant n153`）
+
+与 n152 的关系：
+
+1. 打分公式保持一致（`u_lite -> u_eff -> score`）；
+2. 将 n152-b 的代理常数固化为内部常量（不再通过环境变量暴露）：
+   - `sigma=2.8`
+   - `beta_init=0.65`
+   - `k_sfrac=0.65`
+   - `k_mix=0.20`
+
+#### 24.32.2 超参数数量对比（用户侧）
+
+| variant | 用户需额外设置的环境变量（算法专属） |
+|---|---:|
+| n150 | 2（`MYEVS_N150_SIGMA`, `MYEVS_N150_BETA_INIT`） |
+| n152-b | 4（`MYEVS_N152_SIGMA`, `MYEVS_N152_BETA_INIT`, `MYEVS_N152_K_SFRAC`, `MYEVS_N152_K_MIX`） |
+| n153 | 0（固定内置常量） |
+
+#### 24.32.3 实验口径（compact400k 同口径）
+
+- `max-events=400000`
+- `s in {5,7,9}`
+- `tau_us in {32000,64000,128000,256000}`
+- `esr-mode=off, aocc-mode=off`
+
+执行命令：
+
+```powershell
+$env:PYTHONNOUSERSITE='1'
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/ED24_alg_evalu/sweep_ebf_slim_labelscore_grid.py `
+	--variant n153 --max-events 400000 --s-list 5,7,9 --tau-us-list 32000,64000,128000,256000 `
+	--esr-mode off --aocc-mode off `
+	--out-dir data/ED24/myPedestrain_06/EBF_Part2/_slim_n153_20260423_fixedproxy_compact400k
+
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/noise_analyze/segment_f1.py `
+	--labeled-npy D:/hjx_workspace/scientific_reserach/dataset/ED24/myPedestrain_06/Pedestrain_06_3.3.npy `
+	--variant n153 --s 9 --tau-us 128000 --max-events 400000 --segment-events 200000 `
+	--roc-csv data/ED24/myPedestrain_06/EBF_Part2/_slim_n153_20260423_fixedproxy_compact400k/roc_ebf_n153_heavy_labelscore_s5_7_9_tau32_64_128_256ms.csv `
+	--out-csv data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/segf1_n153_20260423_heavy_compact400k_s9_tau128.csv
+```
+
+#### 24.32.4 结果（n150 / n152-b / n153）
+
+| variant | mean AUC | mean F1 | heavy best-F1 |
+|---|---:|---:|---:|
+| n150（2.8/0.65） | 0.943065 | 0.843447 | 0.764715 |
+| n152-b（k=0.65/0.20） | 0.943115 | 0.843963 | 0.766029 |
+| n153（固定版） | 0.943115 | 0.843963 | 0.766029 |
+
+delta（n153 相对 n150）：
+
+- `mean AUC +0.000050`
+- `mean F1 +0.000516`
+- `heavy best-F1 +0.001314`
+
+delta（n153 相对 n152-b）：
+
+- `mean AUC +0.000000`
+- `mean F1 +0.000000`
+- `heavy best-F1 +0.000000`
+
+heavy 分段（2×200k；`s=9,tau=128ms`）：
+
+| variant | seg0 F1 | seg0 noise_kept_rate | seg1 F1 | seg1 noise_kept_rate |
+|---|---:|---:|---:|---:|
+| n150 | 0.797646 | 0.026608 | 0.660070 | 0.012478 |
+| n152-b | 0.804880 | 0.035851 | 0.678182 | 0.019376 |
+| n153 | 0.804880 | 0.035851 | 0.678182 | 0.019376 |
+
+#### 24.32.5 结论
+
+1. 本轮在“减少超参数”目标上达成：n153 把用户侧算法超参数降为 0；
+2. 在同口径下，n153 完整复现 n152-b 精度，且相对 n150 仍保持稳定增益；
+3. 因此后续若优先可用性与复现性，建议用 n153 替代 n152-b 作为轻量路线默认版本。
+
+产物目录：
+
+- `data/ED24/myPedestrain_06/EBF_Part2/_slim_n153_20260423_fixedproxy_compact400k/`
+- `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/segf1_n153_20260423_heavy_compact400k_s9_tau128.csv`
+
+### 24.33 非 S52 公式重构尝试（n160 / n161 / n162）
+
+目的（按“原理突破”要求）：
+
+1. 完全脱离 `mix_state + beta_state + hotstate` 的 S52 融合链；
+2. 保留 n149 的 compact-LUT 邻域证据提取，仅重构极性评分本体；
+3. 在不增加状态、尽量不引入新超参数的前提下验证是否存在精度突破。
+
+#### 24.33.1 三个非 S52 公式
+
+实现文件：
+
+- `src/myevs/denoise/ops/ebfopt_part2/n160_polarity_purity_fixed_backbone.py`
+- `src/myevs/denoise/ops/ebfopt_part2/n161_polarity_linear_fixed_backbone.py`
+- `src/myevs/denoise/ops/ebfopt_part2/n162_polarity_residual_fixed_backbone.py`
+
+sweep 接入：
+
+- `scripts/ED24_alg_evalu/sweep_ebf_slim_labelscore_grid.py`（新增 `--variant n160/n161/n162`）
+
+统一记号：
+
+$$
+E_s=\mathrm{raw}_{same},\quad E_o=\mathrm{raw}_{opp},\quad
+E_t=E_s+E_o,\quad
+u=\operatorname{clip}(1-dt_0/\tau,0,1),\quad
+s=s_{frac}
+$$
+
+n160（purity）：
+
+$$
+\mathrm{score}_{160}=\frac{E_t\cdot\left(\frac{E_s}{E_t+\varepsilon}\right)^2\cdot(0.5+0.5s)}
+{1+\left(u\cdot(1-0.5s)\right)^2}
+$$
+
+n161（linear）：
+
+$$
+\mathrm{score}_{161}=\frac{E_s\cdot\left(1-0.5\frac{E_o}{E_t+\varepsilon}\right)\cdot(1+0.5s)}
+{1+\left(u\cdot(1-0.35s)\right)^2}
+$$
+
+n162（residual）：
+
+$$
+R=\max(E_s-E_o,0),\quad
+\mathrm{score}_{162}=\frac{(E_s+0.75R)\cdot(1+0.4s)}
+{1+\left(u\cdot(1-0.4s)\right)^2}
+$$
+
+说明：
+
+1. 三者都不使用 S52 慢变量（`mix_state/beta_state`）；
+2. 三者都不增加 per-pixel 持久状态，状态占用与 n150/n153 同阶（约 790.7 KiB）；
+3. 用户侧不需要新增算法环境变量（固定常量版）。
+
+#### 24.33.2 实验口径（compact400k 同口径）
+
+- `max-events=400000`
+- `s in {5,7,9}`
+- `tau_us in {32000,64000,128000,256000}`
+- `esr-mode=off, aocc-mode=off`
+
+执行命令（示例）：
+
+```powershell
+$env:PYTHONNOUSERSITE='1'
+
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/ED24_alg_evalu/sweep_ebf_slim_labelscore_grid.py `
+	--variant n160 --max-events 400000 --s-list 5,7,9 --tau-us-list 32000,64000,128000,256000 `
+	--esr-mode off --aocc-mode off `
+	--out-dir data/ED24/myPedestrain_06/EBF_Part2/_slim_n160_20260423_polpurity_compact400k
+
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/ED24_alg_evalu/sweep_ebf_slim_labelscore_grid.py `
+	--variant n161 --max-events 400000 --s-list 5,7,9 --tau-us-list 32000,64000,128000,256000 `
+	--esr-mode off --aocc-mode off `
+	--out-dir data/ED24/myPedestrain_06/EBF_Part2/_slim_n161_20260423_pollinear_compact400k
+
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/ED24_alg_evalu/sweep_ebf_slim_labelscore_grid.py `
+	--variant n162 --max-events 400000 --s-list 5,7,9 --tau-us-list 32000,64000,128000,256000 `
+	--esr-mode off --aocc-mode off `
+	--out-dir data/ED24/myPedestrain_06/EBF_Part2/_slim_n162_20260423_polresidual_compact400k
+```
+
+#### 24.33.3 结果对比
+
+| variant | mean AUC | mean F1 | heavy best-F1 |
+|---|---:|---:|---:|
+| n149（2.8，精度主线） | **0.944325** | **0.846442** | **0.769616** |
+| n153（固定 S52-lite） | 0.943115 | 0.843963 | 0.766029 |
+| n160（non-S52 purity） | 0.925046 | 0.826102 | 0.746043 |
+| n161（non-S52 linear） | 0.934803 | 0.837107 | 0.759484 |
+| n162（non-S52 residual） | 0.933298 | 0.832449 | 0.751966 |
+
+对 n153 的 delta：
+
+1. n160：`mean F1 -0.017861`, `heavy best-F1 -0.019986`
+2. n161：`mean F1 -0.006856`, `heavy best-F1 -0.006545`
+3. n162：`mean F1 -0.011514`, `heavy best-F1 -0.014063`
+
+n161 的 heavy 分段（2×200k，`s=9,tau=128ms`）：
+
+| variant | seg0 F1 | seg0 noise_kept_rate | seg1 F1 | seg1 noise_kept_rate |
+|---|---:|---:|---:|---:|
+| n153 | 0.804880 | 0.035851 | 0.678182 | 0.019376 |
+| n161 | 0.801038 | 0.036725 | 0.668858 | 0.024784 |
+
+#### 24.33.4 结论（关于“是否彻底脱离 S52”）
+
+1. 这轮“非 S52 公式重构”在原理上已验证可行，但当前三种公式均未超过 n153，更未超过 n149；
+2. 最好的非 S52 版本是 n161，但仍明显落后于 n153（主要在 mid/heavy，尤其 seg1）；
+3. 现阶段结论是：S52 路线仍可突破，但突破点不在“继续加超参数”，而在**更强的中心代理信息量**与**更稳的重构形状**；
+4. 推荐策略：保留 n153 作为当前轻量默认主线，同时将非 S52 路线作为研究支线继续推进。
+
+产物目录：
+
+- `data/ED24/myPedestrain_06/EBF_Part2/_slim_n160_20260423_polpurity_compact400k/`
+- `data/ED24/myPedestrain_06/EBF_Part2/_slim_n161_20260423_pollinear_compact400k/`
+- `data/ED24/myPedestrain_06/EBF_Part2/_slim_n162_20260423_polresidual_compact400k/`
+- `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/segf1_n161_20260423_heavy_compact400k_s9_tau128.csv`
+
+### 24.34 并行迭代（路线 3）：n170（非 S52）与 n171（S52-lite 节律增强）
+
+目标：
+
+1. 不增加每像素持久状态，在 `compact400k` 口径下继续冲击“同资源提精度”；
+2. 并行验证两条路线：一条完全非 S52（n170），一条在 S52-lite 骨架上做原理增强（n171）。
+
+#### 24.34.1 两条新公式
+
+实现文件：
+
+- `src/myevs/denoise/ops/ebfopt_part2/n170_polarity_transition_fixed_backbone.py`
+- `src/myevs/denoise/ops/ebfopt_part2/n171_s52lite_rhythm_fixed_backbone.py`
+
+sweep 接入：
+
+- `scripts/ED24_alg_evalu/sweep_ebf_slim_labelscore_grid.py`（新增 `--variant n170/n171`）
+
+统一记号：
+
+$$
+E_s=\mathrm{raw}_{same},\;
+E_o=\mathrm{raw}_{opp},\;
+m=\frac{E_o}{E_s+E_o+\varepsilon},\;
+u=\operatorname{clip}(1-dt_0/\tau,0,1),\;
+s=s_{frac}
+$$
+
+n170（非 S52，极性翻转记忆）：
+
+$$
+q=\mathbf{1}[p_{prev}=-p]\cdot u,\quad
+t\leftarrow t+\frac{q-t}{2048},\quad
+\pi_t=\operatorname{clip}\!\left(\frac{t+q}{2},0,1\right)
+$$
+
+$$
+\lambda_o=\left((1-m)(1-\pi_t)\right)^2,\quad
+u_{eff}=u(1+0.9\pi_t)(1-0.45s)
+$$
+
+$$
+\mathrm{score}_{170}=
+\frac{(E_s+\lambda_o E_o)\cdot\left(1+0.55s(1-\pi_t)\right)}
+{1+u_{eff}^2}
+$$
+
+n171（S52-lite + 中心节律增强）：
+
+$$
+r_{bad}=\mathbf{1}[p_{prev}=-p]\cdot u,\quad
+r_{good}=\mathbf{1}[p_{prev}=p]\cdot u,\quad
+r\leftarrow r+\frac{r_{bad}-r}{4096}
+$$
+
+$$
+\pi_r=\operatorname{clip}(0.6r_{bad}+0.4r,0,1),\quad
+\alpha=(1-\bar m)^2\cdot(1-0.35\pi_r)
+$$
+
+$$
+u_{eff}=u\cdot\underbrace{\operatorname{clip}(1-k_s s,0.25,1)}_{\text{support relief}}
+\cdot\underbrace{\operatorname{clip}(1+k_m m,0.5,2)}_{\text{mix gain}}
+\cdot\underbrace{\operatorname{clip}(1+0.55\pi_r-0.2r_{good},0.5,1.8)}_{\text{rhythm scale}}
+$$
+
+$$
+\mathrm{score}_{171}=
+\frac{E_s+\alpha E_o}{1+u_{eff}^2}\cdot
+\operatorname{clip}\!\left(1+b s(1+0.25r_{good}),1,2\right),\;
+b\leftarrow b+\frac{u_{eff}-b}{4096}
+$$
+
+说明：
+
+1. n170 完全不依赖 `mix_state + beta_state` 的 S52 融合链，只保留单标量翻转记忆 `t`；
+2. n171 保留 n153 骨架，但显式引入“快速翻转抑制、同极短间隔放行”的节律项；
+3. 两者都不新增 per-pixel 数组，持久状态规模仍与 n150/n153 同阶（约 `790.7 KiB`）。
+
+#### 24.34.2 实验口径与命令（compact400k）
+
+- `max-events=400000`
+- `s in {5,7,9}`
+- `tau_us in {32000,64000,128000,256000}`
+- `esr-mode=off, aocc-mode=off`
+
+```powershell
+$env:PYTHONNOUSERSITE='1'
+
+# n170
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/ED24_alg_evalu/sweep_ebf_slim_labelscore_grid.py `
+	--variant n170 --max-events 400000 --s-list 5,7,9 --tau-us-list 32000,64000,128000,256000 `
+	--esr-mode off --aocc-mode off `
+	--out-dir data/ED24/myPedestrain_06/EBF_Part2/_slim_n170_20260423_poltrans_compact400k
+
+# n171
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/ED24_alg_evalu/sweep_ebf_slim_labelscore_grid.py `
+	--variant n171 --max-events 400000 --s-list 5,7,9 --tau-us-list 32000,64000,128000,256000 `
+	--esr-mode off --aocc-mode off `
+	--out-dir data/ED24/myPedestrain_06/EBF_Part2/_slim_n171_20260423_rhythm_compact400k
+
+# heavy 2×200k 分段（s=9,tau=128ms）
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/noise_analyze/segment_f1.py `
+	--labeled-npy D:/hjx_workspace/scientific_reserach/dataset/ED24/myPedestrain_06/Pedestrain_06_3.3.npy `
+	--variant n170 --s 9 --tau-us 128000 --max-events 400000 --segment-events 200000 `
+	--roc-csv data/ED24/myPedestrain_06/EBF_Part2/_slim_n170_20260423_poltrans_compact400k/roc_ebf_n170_heavy_labelscore_s5_7_9_tau32_64_128_256ms.csv `
+	--out-csv data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/segf1_n170_20260423_heavy_compact400k_s9_tau128.csv
+
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/noise_analyze/segment_f1.py `
+	--labeled-npy D:/hjx_workspace/scientific_reserach/dataset/ED24/myPedestrain_06/Pedestrain_06_3.3.npy `
+	--variant n171 --s 9 --tau-us 128000 --max-events 400000 --segment-events 200000 `
+	--roc-csv data/ED24/myPedestrain_06/EBF_Part2/_slim_n171_20260423_rhythm_compact400k/roc_ebf_n171_heavy_labelscore_s5_7_9_tau32_64_128_256ms.csv `
+	--out-csv data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/segf1_n171_20260423_heavy_compact400k_s9_tau128.csv
+```
+
+#### 24.34.3 主指标结果（同口径）
+
+| variant | mean AUC | mean F1 | heavy best-F1 |
+|---|---:|---:|---:|
+| n149（2.8，精度主线） | 0.944325 | **0.846442** | **0.769616** |
+| n153（固定 S52-lite） | 0.943115 | 0.843963 | 0.766029 |
+| n170（非 S52 transition） | 0.939449 | 0.840910 | 0.761865 |
+| n171（节律增强 S52-lite） | **0.944352** | 0.845923 | 0.769356 |
+
+delta（n171 相对 n153）：
+
+- `mean AUC +0.001237`
+- `mean F1 +0.001960`
+- `heavy best-F1 +0.003327`
+
+delta（n171 相对 n149）：
+
+- `mean AUC +0.000027`
+- `mean F1 -0.000519`
+- `heavy best-F1 -0.000260`
+
+delta（n170 相对 n153）：
+
+- `mean AUC -0.003666`
+- `mean F1 -0.003053`
+- `heavy best-F1 -0.004164`
+
+#### 24.34.4 heavy 分段（2×200k；s=9,tau=128ms）
+
+| variant | seg0 F1 | seg0 noise_kept_rate | seg1 F1 | seg1 noise_kept_rate |
+|---|---:|---:|---:|---:|
+| n149 | 0.801081 | 0.026633 | 0.673548 | 0.012224 |
+| n153 | 0.804880 | 0.035851 | 0.678182 | 0.019376 |
+| n170 | 0.803388 | 0.034708 | 0.670307 | 0.022593 |
+| n171 | **0.808525** | 0.035938 | **0.681473** | 0.020441 |
+
+分段解读：
+
+1. n171 在 seg0/seg1 的 F1 都高于 n153（分别 `+0.003645`, `+0.003291`）；
+2. n171 的提升不是单纯“更保守”：seg0 噪声率几乎不变，seg1 噪声率小幅上升但换来更明显 recall/F1 改善；
+3. n170 在 seg1 明显退化，说明“彻底去 S52 + 单翻转记忆”当前仍缺少稳定的全局抑噪锚点。
+
+#### 24.34.5 本轮经验教训
+
+1. 真正有效的突破点不是“再加可调参数”，而是引入**有物理语义的节律变量**（快速翻转 vs 同极短间隔）；
+2. 完全非 S52 路线（n170）目前精度仍落后主线，原因是全局稳态不足导致 mid/heavy 易失稳；
+3. S52-lite 路线仍有可突破空间：n171 在同资源前提下已经把 n153 明显抬升，并逼近 n149；
+4. 下一轮优先方向应是继续沿 n171 精炼固定形状（尤其针对 seg1），而不是回到高维超参数网格。
+
+产物目录：
+
+- `data/ED24/myPedestrain_06/EBF_Part2/_slim_n170_20260423_poltrans_compact400k/`
+- `data/ED24/myPedestrain_06/EBF_Part2/_slim_n171_20260423_rhythm_compact400k/`
+- `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/segf1_n170_20260423_heavy_compact400k_s9_tau128.csv`
+- `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/segf1_n171_20260423_heavy_compact400k_s9_tau128.csv`

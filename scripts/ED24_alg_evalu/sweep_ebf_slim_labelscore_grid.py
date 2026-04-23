@@ -2243,6 +2243,90 @@ def _score_stream(
             tb=tb,
             scores_out=scores,
         )
+    if v in {"n152", "ebf_n152", "ebfn152"}:
+        from myevs.denoise.ops.ebfopt_part2.n152_n150_supportmix_center_proxy_backbone import score_stream_n152
+
+        return score_stream_n152(
+            ev,
+            width=int(width),
+            height=int(height),
+            radius_px=int(radius_px),
+            tau_us=int(tau_us),
+            tb=tb,
+            scores_out=scores,
+        )
+    if v in {"n153", "ebf_n153", "ebfn153"}:
+        from myevs.denoise.ops.ebfopt_part2.n153_n152_fixedproxy_backbone import score_stream_n153
+
+        return score_stream_n153(
+            ev,
+            width=int(width),
+            height=int(height),
+            radius_px=int(radius_px),
+            tau_us=int(tau_us),
+            tb=tb,
+            scores_out=scores,
+        )
+    if v in {"n160", "ebf_n160", "ebfn160"}:
+        from myevs.denoise.ops.ebfopt_part2.n160_polarity_purity_fixed_backbone import score_stream_n160
+
+        return score_stream_n160(
+            ev,
+            width=int(width),
+            height=int(height),
+            radius_px=int(radius_px),
+            tau_us=int(tau_us),
+            tb=tb,
+            scores_out=scores,
+        )
+    if v in {"n161", "ebf_n161", "ebfn161"}:
+        from myevs.denoise.ops.ebfopt_part2.n161_polarity_linear_fixed_backbone import score_stream_n161
+
+        return score_stream_n161(
+            ev,
+            width=int(width),
+            height=int(height),
+            radius_px=int(radius_px),
+            tau_us=int(tau_us),
+            tb=tb,
+            scores_out=scores,
+        )
+    if v in {"n162", "ebf_n162", "ebfn162"}:
+        from myevs.denoise.ops.ebfopt_part2.n162_polarity_residual_fixed_backbone import score_stream_n162
+
+        return score_stream_n162(
+            ev,
+            width=int(width),
+            height=int(height),
+            radius_px=int(radius_px),
+            tau_us=int(tau_us),
+            tb=tb,
+            scores_out=scores,
+        )
+    if v in {"n170", "ebf_n170", "ebfn170"}:
+        from myevs.denoise.ops.ebfopt_part2.n170_polarity_transition_fixed_backbone import score_stream_n170
+
+        return score_stream_n170(
+            ev,
+            width=int(width),
+            height=int(height),
+            radius_px=int(radius_px),
+            tau_us=int(tau_us),
+            tb=tb,
+            scores_out=scores,
+        )
+    if v in {"n171", "ebf_n171", "ebfn171"}:
+        from myevs.denoise.ops.ebfopt_part2.n171_s52lite_rhythm_fixed_backbone import score_stream_n171
+
+        return score_stream_n171(
+            ev,
+            width=int(width),
+            height=int(height),
+            radius_px=int(radius_px),
+            tau_us=int(tau_us),
+            tb=tb,
+            scores_out=scores,
+        )
     if v in {"n107", "ebf_n107", "ebfn107"}:
         from myevs.denoise.ops.ebfopt_part2.n107_projected_energy_backbone import score_stream_n107
 
@@ -2257,7 +2341,7 @@ def _score_stream(
         )
 
     raise SystemExit(
-        f"unknown variant: {variant!r}. supported: ebf | s52 | s55 | s60 | s61 | s62 | s63 | s64 | s65 | s66 | s67 | s68 | s69 | s70 | s71 | s72 | s73 | s74 | s75 | s76 | s77 | s78 | s79 | s80 | s81 | s82 | s83 | s84 | s85 | s86 | s87 | n1 | n2 | n3 | n4 | n5 | n6 | n7 | n71 | n72 | n8 | n81 | n82 | n83 | n84 | n85 | n86 | n87 | n88 | n89 | n90 | n91 | n92 | n93 | n94 | n95 | n96 | n97 | n98 | n99 | n100 | n101 | n102 | n103 | n104 | n105 | n106 | n107 | n108 | n109 | n110 | n111 | n112 | n113 | n114 | n116 | n117 | n118 | n120 | n121 | n123 | n124 | n125 | n126 | n127 | n128 | n129 | n131 | n132 | n133 | n134 | n135 | n137 | n139 | n140 | n141 | n142 | n143 | n144 | n145 | n146 | n147 | n148 | n149 | n150 | n151"
+        f"unknown variant: {variant!r}. supported: ebf | s52 | s55 | s60 | s61 | s62 | s63 | s64 | s65 | s66 | s67 | s68 | s69 | s70 | s71 | s72 | s73 | s74 | s75 | s76 | s77 | s78 | s79 | s80 | s81 | s82 | s83 | s84 | s85 | s86 | s87 | n1 | n2 | n3 | n4 | n5 | n6 | n7 | n71 | n72 | n8 | n81 | n82 | n83 | n84 | n85 | n86 | n87 | n88 | n89 | n90 | n91 | n92 | n93 | n94 | n95 | n96 | n97 | n98 | n99 | n100 | n101 | n102 | n103 | n104 | n105 | n106 | n107 | n108 | n109 | n110 | n111 | n112 | n113 | n114 | n116 | n117 | n118 | n120 | n121 | n123 | n124 | n125 | n126 | n127 | n128 | n129 | n131 | n132 | n133 | n134 | n135 | n137 | n139 | n140 | n141 | n142 | n143 | n144 | n145 | n146 | n147 | n148 | n149 | n150 | n151 | n152 | n153 | n160 | n161 | n162 | n170 | n171"
     )
 
 
@@ -2298,7 +2382,7 @@ def main() -> int:
     ap.add_argument(
         "--variant",
         default="ebf",
-        help="ebf | s52 | s55 | s60 | s61 | s62 | s63 | s64 | s65 | s66 | s67 | s68 | s69 | s70 | s71 | s72 | s73 | s74 | s75 | s76 | s77 | s78 | s79 | s80 | s81 | s82 | s83 | s84 | s85 | s86 | s87 | n1 | n2 | n3 | n4 | n5 | n6 | n7 | n71 | n72 | n8 | n81 | n82 | n83 | n84 | n85 | n86 | n87 | n88 | n89 | n90 | n91 | n92 | n93 | n94 | n95 | n96 | n97 | n98 | n99 | n100 | n101 | n102 | n103 | n104 | n105 | n106 | n107 | n108 | n109 | n110 | n111 | n112 | n113 | n114 | n116 | n117 | n118 | n120 | n121 | n123 | n124 | n125 | n126 | n127 | n128 | n129 | n131 | n132 | n133 | n134 | n135 | n137 | n139 | n140 | n141 | n142 | n143 | n144 | n145 | n146 | n147 | n148 | n149 | n150 | n151",
+        help="ebf | s52 | s55 | s60 | s61 | s62 | s63 | s64 | s65 | s66 | s67 | s68 | s69 | s70 | s71 | s72 | s73 | s74 | s75 | s76 | s77 | s78 | s79 | s80 | s81 | s82 | s83 | s84 | s85 | s86 | s87 | n1 | n2 | n3 | n4 | n5 | n6 | n7 | n71 | n72 | n8 | n81 | n82 | n83 | n84 | n85 | n86 | n87 | n88 | n89 | n90 | n91 | n92 | n93 | n94 | n95 | n96 | n97 | n98 | n99 | n100 | n101 | n102 | n103 | n104 | n105 | n106 | n107 | n108 | n109 | n110 | n111 | n112 | n113 | n114 | n116 | n117 | n118 | n120 | n121 | n123 | n124 | n125 | n126 | n127 | n128 | n129 | n131 | n132 | n133 | n134 | n135 | n137 | n139 | n140 | n141 | n142 | n143 | n144 | n145 | n146 | n147 | n148 | n149 | n150 | n151 | n152 | n153 | n160 | n161 | n162 | n170 | n171",
     )
     ap.add_argument("--max-events", type=int, default=int(os.environ.get("EBF_MAX_EVENTS", "0")), help="0=all")
     ap.add_argument("--out-dir", default="data/ED24/myPedestrain_06/EBF_Part2/_slim", help="output directory")
@@ -2684,12 +2768,33 @@ def main() -> int:
     elif v in {"n151", "ebf_n151", "ebfn151"}:
         roc_prefix = "roc_ebf_n151"
         tag_prefix = "ebf_n151"
+    elif v in {"n152", "ebf_n152", "ebfn152"}:
+        roc_prefix = "roc_ebf_n152"
+        tag_prefix = "ebf_n152"
+    elif v in {"n153", "ebf_n153", "ebfn153"}:
+        roc_prefix = "roc_ebf_n153"
+        tag_prefix = "ebf_n153"
+    elif v in {"n160", "ebf_n160", "ebfn160"}:
+        roc_prefix = "roc_ebf_n160"
+        tag_prefix = "ebf_n160"
+    elif v in {"n161", "ebf_n161", "ebfn161"}:
+        roc_prefix = "roc_ebf_n161"
+        tag_prefix = "ebf_n161"
+    elif v in {"n162", "ebf_n162", "ebfn162"}:
+        roc_prefix = "roc_ebf_n162"
+        tag_prefix = "ebf_n162"
+    elif v in {"n170", "ebf_n170", "ebfn170"}:
+        roc_prefix = "roc_ebf_n170"
+        tag_prefix = "ebf_n170"
+    elif v in {"n171", "ebf_n171", "ebfn171"}:
+        roc_prefix = "roc_ebf_n171"
+        tag_prefix = "ebf_n171"
     elif v in {"n107", "ebf_n107", "ebfn107"}:
         roc_prefix = "roc_ebf_n107"
         tag_prefix = "ebf_n107"
     else:
         raise SystemExit(
-            f"unknown --variant: {args.variant!r}. choices: ebf | s52 | s55 | s60 | s61 | s62 | s63 | s64 | s65 | s66 | s67 | s68 | s69 | s70 | s71 | s72 | s73 | s74 | s75 | s76 | s77 | s78 | s79 | s80 | s81 | s82 | s83 | s84 | s85 | s86 | s87 | n1 | n2 | n3 | n4 | n5 | n6 | n7 | n71 | n72 | n8 | n81 | n82 | n83 | n84 | n85 | n86 | n87 | n88 | n89 | n90 | n91 | n92 | n93 | n94 | n95 | n96 | n97 | n98 | n99 | n100 | n101 | n102 | n103 | n104 | n105 | n106 | n107 | n108 | n109 | n110 | n111 | n112 | n113 | n114 | n116 | n117 | n118 | n120 | n121 | n123 | n124 | n125 | n126 | n127 | n128 | n129 | n131 | n132 | n133 | n134 | n135 | n137 | n139 | n140 | n141 | n142 | n143 | n144 | n145 | n146 | n147 | n148 | n149 | n150 | n151"
+            f"unknown --variant: {args.variant!r}. choices: ebf | s52 | s55 | s60 | s61 | s62 | s63 | s64 | s65 | s66 | s67 | s68 | s69 | s70 | s71 | s72 | s73 | s74 | s75 | s76 | s77 | s78 | s79 | s80 | s81 | s82 | s83 | s84 | s85 | s86 | s87 | n1 | n2 | n3 | n4 | n5 | n6 | n7 | n71 | n72 | n8 | n81 | n82 | n83 | n84 | n85 | n86 | n87 | n88 | n89 | n90 | n91 | n92 | n93 | n94 | n95 | n96 | n97 | n98 | n99 | n100 | n101 | n102 | n103 | n104 | n105 | n106 | n107 | n108 | n109 | n110 | n111 | n112 | n113 | n114 | n116 | n117 | n118 | n120 | n121 | n123 | n124 | n125 | n126 | n127 | n128 | n129 | n131 | n132 | n133 | n134 | n135 | n137 | n139 | n140 | n141 | n142 | n143 | n144 | n145 | n146 | n147 | n148 | n149 | n150 | n151 | n152 | n153 | n160 | n161 | n162 | n170 | n171"
         )
 
     out_dir = str(args.out_dir)
