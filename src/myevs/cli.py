@@ -318,7 +318,11 @@ def cmd_sweep(args) -> int:
     bits_i = int(bits) if bits.isdigit() else None
 
     # Parse values list (comma-separated)
-    values = [int(x.strip()) for x in str(args.values).split(",") if x.strip()]
+    raw_vals = [x.strip() for x in str(args.values).split(",") if x.strip()]
+    if str(args.param) == "min-neighbors":
+        values = [float(x) for x in raw_vals]
+    else:
+        values = [int(float(x)) for x in raw_vals]
     if not values:
         raise SystemExit("--values must be a comma-separated list")
 
@@ -346,7 +350,7 @@ def cmd_sweep(args) -> int:
     off_in = int(st_in.off)
     print(f"input events: {total_in}  (on={st_in.on}, off={st_in.off})")
 
-    rows: list[tuple[int, int, int, int, float, float]] = []
+    rows: list[tuple[float, int, int, int, float, float]] = []
     for v in values:
         # Re-open input each sweep point (stream is forward-only)
         r = open_events(
@@ -377,7 +381,7 @@ def cmd_sweep(args) -> int:
         elif p == "radius-px":
             cfg = replace(cfg, radius_px=int(v))
         elif p == "min-neighbors":
-            cfg = replace(cfg, min_neighbors=int(v))
+            cfg = replace(cfg, min_neighbors=float(v))
         elif p == "refractory-us":
             cfg = replace(cfg, refractory_us=int(v))
         else:
@@ -405,7 +409,7 @@ def cmd_sweep(args) -> int:
         off_out = int(st_out.off)
         kept = (float(total_out) / float(total_in)) if total_in > 0 else 0.0
         removed = 1.0 - kept if total_in > 0 else 0.0
-        rows.append((int(v), total_out, on_out, off_out, kept, removed))
+        rows.append((float(v), total_out, on_out, off_out, kept, removed))
         print(f"{p}={v:>8}  out={total_out:<10} kept={kept:.6f} removed={removed:.6f}")
 
     if args.out_csv:
@@ -821,7 +825,8 @@ def build_parser() -> argparse.ArgumentParser:
             "5 combo(stc+refractory), 6 ratelimit, 7 globalgate, 8 dp, "
             "9 fastdecay (dv-processing FastDecayNoiseFilter; --time-us=half-life, --radius-px=subdivision, --min-neighbors=threshold), "
             "10 ebf (Guo 2025; --time-us=tau, --radius-px=radius (TI25 uses 2), --min-neighbors=score-threshold), "
-            "11 ebf_optimized (research; global adaptive noise normalization; --min-neighbors=normalized-threshold)"
+            "11 ebf_optimized (research; global adaptive noise normalization; --min-neighbors=normalized-threshold), "
+            "12 knoise, 13 evflow, 14 ynoise, 15 ts, 16 mlpf"
         ),
     )
     p_den.add_argument(
@@ -846,7 +851,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_den.add_argument("--time-us", type=int, default=2000, help="time window (us), shared by many methods")
     p_den.add_argument("--radius-px", type=int, default=1, help="spatial radius (px), for stc/baf")
-    p_den.add_argument("--min-neighbors", type=int, default=2, help="threshold/limit (meaning depends on method)")
+    p_den.add_argument("--min-neighbors", type=float, default=2, help="threshold/limit (meaning depends on method)")
     p_den.add_argument("--refractory-us", type=int, default=50, help="refractory/mask/hold time (us)")
     p_den.add_argument("--hide-on", action="store_true", help="hide ON events")
     p_den.add_argument("--hide-off", action="store_true", help="hide OFF events")
@@ -999,7 +1004,8 @@ def build_parser() -> argparse.ArgumentParser:
         default="hotpixel",
         help=(
             "Qt method id/name: 0 none, 1 stc, 2 refractory, 3 hotpixel, 4 baf, "
-            "5 combo(stc+refractory), 6 ratelimit, 7 globalgate, 8 dp"
+            "5 combo(stc+refractory), 6 ratelimit, 7 globalgate, 8 dp, "
+            "9 fastdecay, 10 ebf, 11 ebf_optimized, 12 knoise, 13 evflow, 14 ynoise, 15 ts, 16 mlpf"
         ),
     )
     p_sw.add_argument(
@@ -1018,7 +1024,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_sw.add_argument("--tick-ns", type=float, default=12.5)
     p_sw.add_argument("--time-us", type=int, default=2000)
     p_sw.add_argument("--radius-px", type=int, default=1)
-    p_sw.add_argument("--min-neighbors", type=int, default=2)
+    p_sw.add_argument("--min-neighbors", type=float, default=2)
     p_sw.add_argument("--refractory-us", type=int, default=50)
     p_sw.add_argument("--hide-on", action="store_true", help="hide ON events")
     p_sw.add_argument("--hide-off", action="store_true", help="hide OFF events")
@@ -1060,7 +1066,8 @@ def build_parser() -> argparse.ArgumentParser:
         default="stc",
         help=(
             "Denoise method id/name: 0 none, 1 stc, 2 refractory, 3 hotpixel, 4 baf, "
-            "5 combo(stc+refractory), 6 ratelimit, 7 globalgate, 8 dp, 9 fastdecay, 10 ebf, 11 ebf_optimized"
+            "5 combo(stc+refractory), 6 ratelimit, 7 globalgate, 8 dp, 9 fastdecay, 10 ebf, 11 ebf_optimized, "
+            "12 knoise, 13 evflow, 14 ynoise, 15 ts, 16 mlpf"
         ),
     )
     p_roc.add_argument(

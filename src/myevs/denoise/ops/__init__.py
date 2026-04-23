@@ -18,6 +18,11 @@ from .dp import DpOp
 from .globalgate import GlobalGateOp
 from .fastdecay import FastDecayOp
 from .ebf import EbfOp
+from .knoise import KnoiseOp
+from .evflow import EvFlowOp
+from .ynoise import YnoiseOp
+from .ts import TsOp
+from .mlpf import MlpfOp
 
 __all__ = [
     "DenoiseOp",
@@ -30,4 +35,9 @@ __all__ = [
     "GlobalGateOp",
     "FastDecayOp",
     "EbfOp",
+    "KnoiseOp",
+    "EvFlowOp",
+    "YnoiseOp",
+    "TsOp",
+    "MlpfOp",
 ]

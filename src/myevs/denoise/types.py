@@ -26,7 +26,7 @@ class DenoiseConfig:
     # === Shared parameters (Qt naming) ===
     time_window_us: int = 2000
     radius_px: int = 1
-    min_neighbors: int = 2
+    min_neighbors: float = 2
     refractory_us: int = 50
 
     # === Polarity visibility (match Qt showOn/showOff) ===

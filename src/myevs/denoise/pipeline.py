@@ -28,6 +28,11 @@ from .ops.dp import DpOp
 from .ops.globalgate import GlobalGateOp, keep_by_gate_factor
 from .ops.ebf import EbfOp
 from .ops.ebf_optimized import EbfOptimizedOp
+from .ops.knoise import KnoiseOp
+from .ops.evflow import EvFlowOp
+from .ops.ynoise import YnoiseOp
+from .ops.ts import TsOp
+from .ops.mlpf import MlpfOp
 from .ops.hotpixel import HotPixelOp
 from .ops.fastdecay import FastDecayOp
 from .ops.ratelimit import RateLimitOp
@@ -50,6 +55,11 @@ _METHOD_ID_TO_NAME = {
     9: "fastdecay",  # dv-processing FastDecayNoiseFilter (non-Qt)
     10: "ebf",  # Guo 2025 EBF (non-Qt)
     11: "ebf_optimized",  # EBF w/ global adaptive noise normalization (research)
+    12: "knoise",  # KhodamoradiNoise (cuke-emlb)
+    13: "evflow",  # EventFlow (cuke-emlb)
+    14: "ynoise",  # YangNoise (cuke-emlb)
+    15: "ts",  # TimeSurface (cuke-emlb)
+    16: "mlpf",  # MLP-inspired lightweight proxy (cuke-emlb aligned features)
 }
 
 _NAME_TO_METHOD_ID = {v: k for k, v in _METHOD_ID_TO_NAME.items()}
@@ -81,6 +91,11 @@ def _normalize_method_token(token: str) -> str:
         "9": "fastdecay",
         "10": "ebf",
         "11": "ebf_optimized",
+        "12": "knoise",
+        "13": "evflow",
+        "14": "ynoise",
+        "15": "ts",
+        "16": "mlpf",
         "rate": "ratelimit",
         "global": "globalgate",
         "dg": "dp",
@@ -90,6 +105,11 @@ def _normalize_method_token(token: str) -> str:
         "eventbasedfilter": "ebf",
         "ebfopt": "ebf_optimized",
         "ebf_optim": "ebf_optimized",
+        "stcf": "stc",
+        "knoisefilter": "knoise",
+        "eventflow": "evflow",
+        "yangnoise": "ynoise",
+        "timesurface": "ts",
     }
     if t in aliases:
         return aliases[t]
@@ -151,6 +171,16 @@ def _build_ops(meta: EventStreamMeta, cfg: DenoiseConfig, tb: TimeBase) -> tuple
             ops.append(EbfOp(dims, cfg, tb))
         elif t == "ebf_optimized":
             ops.append(EbfOptimizedOp(dims, cfg, tb))
+        elif t == "knoise":
+            ops.append(KnoiseOp(dims, cfg, tb))
+        elif t == "evflow":
+            ops.append(EvFlowOp(dims, cfg, tb))
+        elif t == "ynoise":
+            ops.append(YnoiseOp(dims, cfg, tb))
+        elif t == "ts":
+            ops.append(TsOp(dims, cfg, tb))
+        elif t == "mlpf":
+            ops.append(MlpfOp(dims, cfg, tb))
         else:
             raise ValueError(f"Unknown denoise method token: {t!r}")
 
