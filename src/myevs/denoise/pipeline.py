@@ -212,7 +212,7 @@ def denoise_stream(
     if eng not in ("python", "numba"):
         raise ValueError(f"Unknown engine: {engine!r} (expected 'python' or 'numba')")
 
-    # Fast path: numba backend for STC only (method=1 / 'stc')
+    # Fast path: numba backend for selected single-op methods.
     if eng == "numba":
         tokens: list[str]
         if cfg.pipeline:
@@ -220,8 +220,11 @@ def denoise_stream(
         else:
             tokens = [_normalize_method_token(str(cfg.method))]
 
-        # Only support pure STC for now (keeps changes small and results predictable)
-        if len(tokens) == 1 and tokens[0] == "stc":
+        # Keep numba path explicit and predictable: single method only.
+        if len(tokens) != 1:
+            raise ValueError("engine='numba' supports only a single method token without pipeline composition")
+
+        if tokens[0] == "stc":
             try:
                 from .numba_stc import is_numba_available, stc_keep_mask_numba, stc_state_init
             except Exception as e:  # pragma: no cover
@@ -268,7 +271,115 @@ def denoise_stream(
                     yield EventBatch(t=t_arr[keep], x=b.x[keep], y=b.y[keep], p=p_arr[keep])
             return
 
-        raise ValueError("engine='numba' currently supports only method=1 (stc) without pipeline")
+        if tokens[0] == "ts":
+            try:
+                from .numba_ts import is_numba_available, ts_keep_mask_numba, ts_state_init
+            except Exception as e:  # pragma: no cover
+                raise RuntimeError(f"Failed to import numba backend: {type(e).__name__}: {e}")
+
+            if not is_numba_available():
+                raise RuntimeError("Numba is not available. Install it (conda-forge: numba) or use --engine python.")
+
+            w = int(meta.width)
+            h = int(meta.height)
+            pos_ts, neg_ts = ts_state_init(w, h)
+
+            r = max(0, min(int(cfg.radius_px), 8))
+            decay_ticks = int(tb.us_to_ticks(int(cfg.time_window_us)))
+            thr = float(cfg.min_neighbors)
+
+            for b in batches:
+                if len(b) == 0:
+                    continue
+
+                t_arr = np.asarray(b.t, dtype=np.uint64)
+                x_arr = np.asarray(b.x, dtype=np.int32)
+                y_arr = np.asarray(b.y, dtype=np.int32)
+                p_arr = np.asarray(b.p, dtype=np.int8)
+
+                keep_u8 = ts_keep_mask_numba(
+                    t=t_arr,
+                    x=x_arr,
+                    y=y_arr,
+                    p=p_arr,
+                    width=w,
+                    height=h,
+                    show_on=bool(cfg.show_on),
+                    show_off=bool(cfg.show_off),
+                    radius_px=r,
+                    decay_ticks=decay_ticks,
+                    threshold=thr,
+                    pos_ts=pos_ts,
+                    neg_ts=neg_ts,
+                )
+
+                if keep_u8.any():
+                    keep = keep_u8.astype(bool)
+                    yield EventBatch(t=t_arr[keep], x=b.x[keep], y=b.y[keep], p=p_arr[keep])
+            return
+
+        if tokens[0] == "evflow":
+            try:
+                from .numba_evflow import evflow_keep_mask_numba, evflow_state_init, is_numba_available
+            except Exception as e:  # pragma: no cover
+                raise RuntimeError(f"Failed to import numba backend: {type(e).__name__}: {e}")
+
+            if not is_numba_available():
+                raise RuntimeError("Numba is not available. Install it (conda-forge: numba) or use --engine python.")
+
+            w = int(meta.width)
+            h = int(meta.height)
+            r = max(1, min(int(cfg.radius_px), 8))
+            win_ticks = int(tb.us_to_ticks(int(cfg.time_window_us)))
+            thr = float(cfg.min_neighbors)
+
+            prev_t, prev_x, prev_y = evflow_state_init()
+
+            for b in batches:
+                if len(b) == 0:
+                    continue
+
+                t_arr = np.asarray(b.t, dtype=np.uint64)
+                x_arr = np.asarray(b.x, dtype=np.int32)
+                y_arr = np.asarray(b.y, dtype=np.int32)
+                p_arr = np.asarray(b.p, dtype=np.int8)
+
+                # Match python path semantics: invisible/out-of-bounds events are ignored
+                # and do not update evflow's temporal queue state.
+                valid = (x_arr >= 0) & (x_arr < w) & (y_arr >= 0) & (y_arr < h)
+                if not cfg.show_on:
+                    valid &= (p_arr <= 0)
+                if not cfg.show_off:
+                    valid &= (p_arr >= 0)
+
+                idx = np.nonzero(valid)[0]
+                if idx.size <= 0:
+                    continue
+
+                t_v = np.asarray(t_arr[idx], dtype=np.uint64)
+                x_v = np.asarray(x_arr[idx], dtype=np.int32)
+                y_v = np.asarray(y_arr[idx], dtype=np.int32)
+
+                keep_v_u8, prev_t, prev_x, prev_y = evflow_keep_mask_numba(
+                    t=t_v,
+                    x=x_v,
+                    y=y_v,
+                    radius_px=r,
+                    win_ticks=win_ticks,
+                    threshold=thr,
+                    prev_t=prev_t,
+                    prev_x=prev_x,
+                    prev_y=prev_y,
+                )
+
+                if keep_v_u8.any():
+                    keep = np.zeros((t_arr.shape[0],), dtype=bool)
+                    keep_idx = idx[keep_v_u8.astype(bool)]
+                    keep[keep_idx] = True
+                    yield EventBatch(t=t_arr[keep], x=b.x[keep], y=b.y[keep], p=p_arr[keep])
+            return
+
+        raise ValueError("engine='numba' currently supports stc / ts / evflow without pipeline")
 
     # Build ops once (they keep state across batches)
     ops, global_gate = _build_ops(meta, cfg, tb)

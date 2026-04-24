@@ -143,6 +143,8 @@ def cmd_denoise(args) -> int:
         refractory_us=args.refractory_us,
         show_on=(not args.hide_on),
         show_off=(not args.hide_off),
+        mlpf_model_path=str(getattr(args, "mlpf_model", "") or ""),
+        mlpf_patch=int(getattr(args, "mlpf_patch", 7) or 7),
     )
 
     out_path = args.out_path
@@ -372,6 +374,8 @@ def cmd_sweep(args) -> int:
             refractory_us=args.refractory_us,
             show_on=(not args.hide_on),
             show_off=(not args.hide_off),
+            mlpf_model_path=str(getattr(args, "mlpf_model", "") or ""),
+            mlpf_patch=int(getattr(args, "mlpf_patch", 7) or 7),
         )
 
         # Override one parameter
@@ -632,6 +636,8 @@ def cmd_roc(args) -> int:
                 refractory_us=int(args.refractory_us),
                 show_on=show_on,
                 show_off=show_off,
+                mlpf_model_path=str(getattr(args, "mlpf_model", "") or ""),
+                mlpf_patch=int(getattr(args, "mlpf_patch", 7) or 7),
             )
 
             # Override one parameter.
@@ -841,7 +847,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--engine",
         choices=["python", "numba"],
         default="python",
-        help="execution engine (numba currently accelerates STC/method=1 only)",
+        help="execution engine (numba currently accelerates stc / ts / evflow for single-method runs)",
     )
     p_den.add_argument(
         "--tick-ns",
@@ -853,6 +859,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_den.add_argument("--radius-px", type=int, default=1, help="spatial radius (px), for stc/baf")
     p_den.add_argument("--min-neighbors", type=float, default=2, help="threshold/limit (meaning depends on method)")
     p_den.add_argument("--refractory-us", type=int, default=50, help="refractory/mask/hold time (us)")
+    p_den.add_argument("--mlpf-model", default="", help="optional TorchScript model path for method=mlpf")
+    p_den.add_argument("--mlpf-patch", type=int, default=7, help="mlpf patch size (odd, e.g. 7/9/11)")
     p_den.add_argument("--hide-on", action="store_true", help="hide ON events")
     p_den.add_argument("--hide-off", action="store_true", help="hide OFF events")
     p_den.add_argument(
@@ -1018,7 +1026,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--engine",
         choices=["python", "numba"],
         default="python",
-        help="execution engine (numba currently accelerates STC/method=1 only)",
+        help="execution engine (numba currently accelerates stc / ts / evflow for single-method runs)",
     )
     p_sw.add_argument("--values", required=True, help="comma-separated values, e.g. 5,10,20,50")
     p_sw.add_argument("--tick-ns", type=float, default=12.5)
@@ -1026,6 +1034,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_sw.add_argument("--radius-px", type=int, default=1)
     p_sw.add_argument("--min-neighbors", type=float, default=2)
     p_sw.add_argument("--refractory-us", type=int, default=50)
+    p_sw.add_argument("--mlpf-model", default="", help="optional TorchScript model path for method=mlpf")
+    p_sw.add_argument("--mlpf-patch", type=int, default=7, help="mlpf patch size (odd, e.g. 7/9/11)")
     p_sw.add_argument("--hide-on", action="store_true", help="hide ON events")
     p_sw.add_argument("--hide-off", action="store_true", help="hide OFF events")
     p_sw.add_argument(
@@ -1085,13 +1095,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--engine",
         choices=["python", "numba"],
         default="python",
-        help="execution engine (numba currently accelerates STC/method=1 only)",
+        help="execution engine (numba currently accelerates stc / ts / evflow for single-method runs)",
     )
     p_roc.add_argument("--tick-ns", type=float, default=12.5)
     p_roc.add_argument("--time-us", type=int, default=2000)
     p_roc.add_argument("--radius-px", type=int, default=1)
     p_roc.add_argument("--min-neighbors", type=float, default=2)
     p_roc.add_argument("--refractory-us", type=int, default=50)
+    p_roc.add_argument("--mlpf-model", default="", help="optional TorchScript model path for method=mlpf")
+    p_roc.add_argument("--mlpf-patch", type=int, default=7, help="mlpf patch size (odd, e.g. 7/9/11)")
     p_roc.add_argument("--hide-on", action="store_true", help="hide ON events")
     p_roc.add_argument("--hide-off", action="store_true", help="hide OFF events")
     p_roc.add_argument(

@@ -32,3 +32,9 @@ class DenoiseConfig:
     # === Polarity visibility (match Qt showOn/showOff) ===
     show_on: bool = True
     show_off: bool = True
+
+    # === MLPF options (optional real model inference) ===
+    # If empty, mlpf op falls back to lightweight proxy behavior.
+    mlpf_model_path: str = ""
+    # Patch size for mlpf feature construction (odd values recommended: 7/9/11).
+    mlpf_patch: int = 7

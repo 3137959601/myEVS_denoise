@@ -44,10 +44,11 @@ $MATCH_BIN_RADIUS = 0
 # 注：min-neighbors 是整数语义；这里按 0..50 全覆盖，基本能覆盖 (0,0) 到 (1,1)
 $EBF_THR_LIST = (0..50) -join ','
 
-# 论文：s sweep 固定 τ=64ms；τ sweep 固定 s=5
+# 论文：窗口直径 d sweep 固定 τ=64ms；τ sweep 固定 d=5
+# 统一口径：传给 `--radius-px` 的始终是“半径”。
 $TAU_FIXED_US = 64000
-$S_LIST = 1..8
-$S_FIXED = 5
+$DIAMETER_LIST = 3,5,7,9,11
+$DIAMETER_FIXED = 5
 $TAU_LIST_US = @(16000, 32000, 64000, 128000, 256000)
 
 function Get-TopTags {
@@ -93,11 +94,12 @@ function Run-Ebf-For-Noise {
 	New-Item -ItemType Directory -Force -Path $OUT_DIR | Out-Null
 
 	Write-Host "=== EBF paper: $NoiseName | Step A: sweep s with tau=64ms ==="
-	$OUT_A = Join-Path $OUT_DIR ("roc_ebf_{0}_paper_sweep_s_tau64ms_label_exact.csv" -f $NoiseName)
+	$OUT_A = Join-Path $OUT_DIR ("roc_ebf_{0}_paper_sweep_s_tau64ms.csv" -f $NoiseName)
 	[System.IO.File]::WriteAllText($OUT_A, "")
 
-	foreach ($s in $S_LIST) {
-		& $PY -m myevs.cli roc --clean $CleanPath --noisy $NoisyPath --assume npy --width 346 --height 260 --tick-ns $TICK_NS --method ebf --radius-px $s --time-us $TAU_FIXED_US --param min-neighbors --values $EBF_THR_LIST --match-us $MATCH_US --match-bin-radius $MATCH_BIN_RADIUS --tag ("ebf_s{0}_tau64ms_{1}" -f $s, $NoiseName) --out-csv $OUT_A --append --progress
+	foreach ($d in $DIAMETER_LIST) {
+		$r = [int](($d - 1) / 2)
+		& $PY -m myevs.cli roc --clean $CleanPath --noisy $NoisyPath --assume npy --width 346 --height 260 --tick-ns $TICK_NS --method ebf --radius-px $r --time-us $TAU_FIXED_US --param min-neighbors --values $EBF_THR_LIST --match-us $MATCH_US --match-bin-radius $MATCH_BIN_RADIUS --tag ("ebf_d{0}_r{1}_tau64ms_{2}" -f $d, $r, $NoiseName) --out-csv $OUT_A --append --progress
 	}
 
 	$TOP_TAGS_A = Get-TopTags -CsvPath $OUT_A -TopN $TopN
@@ -106,11 +108,12 @@ function Run-Ebf-For-Noise {
 	& $PY -m myevs.cli plot-csv --in $OUT_A_TOP --out (Join-Path $OUT_DIR ("roc_ebf_{0}_paper_sweep_s_tau64ms_top{1}.png" -f $NoiseName, $TopN)) --x fpr --y tpr --group tag --kind line --xlabel FPR --ylabel TPR --title ("EBF ROC ({0}) paper: sweep s @ tau=64ms (top{1})" -f $NoiseName, $TopN)
 
 	Write-Host "=== EBF paper: $NoiseName | Step B: sweep tau with s=5 ==="
-	$OUT_B = Join-Path $OUT_DIR ("roc_ebf_{0}_paper_s5_sweep_tau_label_exact.csv" -f $NoiseName)
+	$OUT_B = Join-Path $OUT_DIR ("roc_ebf_{0}_paper_s5_sweep_tau.csv" -f $NoiseName)
 	[System.IO.File]::WriteAllText($OUT_B, "")
 
+	$r_fixed = [int](($DIAMETER_FIXED - 1) / 2)
 	foreach ($tau in $TAU_LIST_US) {
-		& $PY -m myevs.cli roc --clean $CleanPath --noisy $NoisyPath --assume npy --width 346 --height 260 --tick-ns $TICK_NS --method ebf --radius-px $S_FIXED --time-us $tau --param min-neighbors --values $EBF_THR_LIST --match-us $MATCH_US --match-bin-radius $MATCH_BIN_RADIUS --tag ("ebf_s5_tau{0}us_{1}" -f $tau, $NoiseName) --out-csv $OUT_B --append --progress
+		& $PY -m myevs.cli roc --clean $CleanPath --noisy $NoisyPath --assume npy --width 346 --height 260 --tick-ns $TICK_NS --method ebf --radius-px $r_fixed --time-us $tau --param min-neighbors --values $EBF_THR_LIST --match-us $MATCH_US --match-bin-radius $MATCH_BIN_RADIUS --tag ("ebf_d{0}_r{1}_tau{2}us_{3}" -f $DIAMETER_FIXED, $r_fixed, $tau, $NoiseName) --out-csv $OUT_B --append --progress
 	}
 
 	$TOP_TAGS_B = Get-TopTags -CsvPath $OUT_B -TopN ([Math]::Min($TopN, $TAU_LIST_US.Count))

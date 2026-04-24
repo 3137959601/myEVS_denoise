@@ -32,30 +32,44 @@ $TICK_NS = 1000
 $MATCH_US = 0
 $MATCH_BIN_RADIUS = 0
 
-$S_LIST = 3,5,7,9
+# ========================== TUNE_HERE: STCF sweep ==========================
+# ED24 round1 best:
+# - light : r=4, tau≈256000
+# - mid   : r=3, tau≈16000
+# - heavy : r=2, tau≈16000
+$RADIUS_LIST = 1,2,3,4
 $TAU_LIST = "100,200,500,1000,2000,4000,8000,16000,32000,64000,128000,256000,512000"
+$RUNTIME_CSV = "data/ED24/myPedestrain_06/STCF/runtime_stcf.csv"
+"algorithm,level,start_time,end_time,elapsed_sec" | Out-File -FilePath $RUNTIME_CSV -Encoding utf8
+
 Write-Host "=== STCF slomo: light ==="
+$T0 = Get-Date
 $OUT = "data/ED24/myPedestrain_06/STCF/roc_stcf_light.csv"; [System.IO.File]::WriteAllText($OUT, "")
-foreach ($s in $S_LIST) {
-  $r = [int](($s - 1) / 2)
-  & $PY -m myevs.cli roc --clean $LIGHT_CLEAN --noisy $LIGHT_NOISY --assume npy --width 346 --height 260 --tick-ns $TICK_NS --method stc --radius-px $r --param time-us --values $TAU_LIST --match-us $MATCH_US --match-bin-radius $MATCH_BIN_RADIUS --tag ("stcf_s{0}" -f $s) --out-csv $OUT --append --progress
+foreach ($r in $RADIUS_LIST) {
+  & $PY -m myevs.cli roc --clean $LIGHT_CLEAN --noisy $LIGHT_NOISY --assume npy --width 346 --height 260 --tick-ns $TICK_NS --method stc --radius-px $r --param time-us --values $TAU_LIST --match-us $MATCH_US --match-bin-radius $MATCH_BIN_RADIUS --tag ("stcf_r{0}" -f $r) --out-csv $OUT --append --progress
 }
 & $PY -m myevs.cli plot-csv --in $OUT --out "data/ED24/myPedestrain_06/STCF/roc_stcf_light.png" --x fpr --y tpr --group tag --kind line --xlabel FPR --ylabel TPR --title "STCF ROC (light)"
+$T1 = Get-Date
+('{0},{1},{2},{3},{4}' -f "stcf", "light", $T0.ToString("s"), $T1.ToString("s"), [Math]::Round((New-TimeSpan -Start $T0 -End $T1).TotalSeconds, 3)) | Add-Content -Path $RUNTIME_CSV -Encoding utf8
 
 Write-Host "=== STCF slomo: mid ==="
+$T0 = Get-Date
 $OUT = "data/ED24/myPedestrain_06/STCF/roc_stcf_mid.csv"; [System.IO.File]::WriteAllText($OUT, "")
-foreach ($s in $S_LIST) {
-  $r = [int](($s - 1) / 2)
-  & $PY -m myevs.cli roc --clean $MID_CLEAN --noisy $MID_NOISY --assume npy --width 346 --height 260 --tick-ns $TICK_NS --method stc --radius-px $r --param time-us --values $TAU_LIST --match-us $MATCH_US --match-bin-radius $MATCH_BIN_RADIUS --tag ("stcf_s{0}" -f $s) --out-csv $OUT --append --progress
+foreach ($r in $RADIUS_LIST) {
+  & $PY -m myevs.cli roc --clean $MID_CLEAN --noisy $MID_NOISY --assume npy --width 346 --height 260 --tick-ns $TICK_NS --method stc --radius-px $r --param time-us --values $TAU_LIST --match-us $MATCH_US --match-bin-radius $MATCH_BIN_RADIUS --tag ("stcf_r{0}" -f $r) --out-csv $OUT --append --progress
 }
 & $PY -m myevs.cli plot-csv --in $OUT --out "data/ED24/myPedestrain_06/STCF/roc_stcf_mid.png" --x fpr --y tpr --group tag --kind line --xlabel FPR --ylabel TPR --title "STCF ROC (mid)"
+$T1 = Get-Date
+('{0},{1},{2},{3},{4}' -f "stcf", "mid", $T0.ToString("s"), $T1.ToString("s"), [Math]::Round((New-TimeSpan -Start $T0 -End $T1).TotalSeconds, 3)) | Add-Content -Path $RUNTIME_CSV -Encoding utf8
 
 Write-Host "=== STCF slomo: heavy ==="
+$T0 = Get-Date
 $OUT = "data/ED24/myPedestrain_06/STCF/roc_stcf_heavy.csv"; [System.IO.File]::WriteAllText($OUT, "")
-foreach ($s in $S_LIST) {
-  $r = [int](($s - 1) / 2)
-  & $PY -m myevs.cli roc --clean $HEAVY_CLEAN --noisy $HEAVY_NOISY --assume npy --width 346 --height 260 --tick-ns $TICK_NS --method stc --radius-px $r --param time-us --values $TAU_LIST --match-us $MATCH_US --match-bin-radius $MATCH_BIN_RADIUS --tag ("stcf_s{0}" -f $s) --out-csv $OUT --append --progress
+foreach ($r in $RADIUS_LIST) {
+  & $PY -m myevs.cli roc --clean $HEAVY_CLEAN --noisy $HEAVY_NOISY --assume npy --width 346 --height 260 --tick-ns $TICK_NS --method stc --radius-px $r --param time-us --values $TAU_LIST --match-us $MATCH_US --match-bin-radius $MATCH_BIN_RADIUS --tag ("stcf_r{0}" -f $r) --out-csv $OUT --append --progress
 }
 & $PY -m myevs.cli plot-csv --in $OUT --out "data/ED24/myPedestrain_06/STCF/roc_stcf_heavy.png" --x fpr --y tpr --group tag --kind line --xlabel FPR --ylabel TPR --title "STCF ROC (heavy)"
+$T1 = Get-Date
+('{0},{1},{2},{3},{4}' -f "stcf", "heavy", $T0.ToString("s"), $T1.ToString("s"), [Math]::Round((New-TimeSpan -Start $T0 -End $T1).TotalSeconds, 3)) | Add-Content -Path $RUNTIME_CSV -Encoding utf8
 
 Write-Host "=== DONE: STCF slomo ==="
