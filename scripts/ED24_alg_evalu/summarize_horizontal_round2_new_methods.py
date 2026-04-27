@@ -21,6 +21,7 @@ def main() -> None:
         "ynoise": root / "YNOISE",
         "ts": root / "TS",
         "mlpf": root / "MLPF",
+        "pfd": root / "PFD",
     }
     levels = ("light", "mid", "heavy")
 

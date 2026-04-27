@@ -11038,3 +11038,458 @@ delta（n175 相对 n149）：
 - `data/ED24/myPedestrain_06/EBF_Part2/_slim_n174_20260423_balanced_compact400k/`
 - `data/ED24/myPedestrain_06/EBF_Part2/_slim_n175_20260423_rational_compact400k/`
 - `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/segf1_n175_20260423_heavy_compact400k_s9_tau128.csv`
+
+### 24.36 2026-04-27：n175 运行时缓存优化与 n176 实时友好 relief 版本
+
+#### 24.36.1 动机
+
+n175 是当前 compact400k 协议下最稳的版本，但仍有两个问题：
+
+1. 公式仍偏复杂，包含局部混极、中心翻转节律、支持率、慢变量增益等多个项；
+2. Python/Numba 入口存在工程开销，原 `score_stream_n175()` 每次调用都会重新构造 kernel dispatcher 与空间 LUT，离线 sweep 还能接受，但不利于真实流式实时评估；
+3. heavy 档 F1 虽然最好，但分段结果显示仍存在精度和噪声保留率的权衡空间。
+
+本轮做两个层面的改动：
+
+1. **不改变 n175 公式的运行时缓存优化**：缓存 Numba kernel dispatcher 与紧凑空间 LUT；
+2. **新增 n176 算法变体**：沿用 n175 主体，只替换两个固定分数常量，让公式更适合“高空间支持时放松中心 burst 抑制、降低混极项过强干预”的解释。
+
+#### 24.36.2 代码改动
+
+1. `src/myevs/denoise/ops/ebfopt_part2/n175_s52lite_rational_gate_backbone.py`
+   - 新增 `_N175_KERNEL` 和 `_N175_TABLE_CACHE`；
+   - 新增 `_score_stream_n175_core(...)`，把 n175 主计算抽成可复用核心；
+   - `score_stream_n175(...)` 仍使用 n175 原常量，理论上不改变 score，只减少重复构建开销。
+2. `src/myevs/denoise/ops/ebfopt_part2/n176_s52lite_realtime_relief_backbone.py`
+   - 新增 `score_stream_n176(...)`；
+   - 复用 n175 的 kernel、LUT、状态布局和主公式；
+   - 只替换 `k_s` 与 `k_m` 两个固定分数常量。
+3. `scripts/ED24_alg_evalu/sweep_ebf_slim_labelscore_grid.py`
+   - 接入 `--variant n176`；
+   - 输出前缀为 `roc_ebf_n176` 与 `ebf_n176`。
+4. `scripts/noise_analyze/bench_variant_runtime.py`
+   - 新增 scoring-only 速度测试脚本；
+   - 测试口径为：预热后计时，不包含 `.npy` 读取和 ROC 排序。
+
+#### 24.36.3 n175/n176 统一公式
+
+记：
+
+- \(E_s\)：同极邻域时间衰减支持；
+- \(E_o\)：反极邻域时间衰减支持；
+- \(m=E_o/(E_s+E_o+\epsilon)\)：局部混极比例；
+- \(\bar m\)：混极比例的 EMA 慢变量；
+- \(u=1-\min(\Delta t_0,\tau)/\tau\)：中心像素短间隔强度；
+- \(r_{bad}=u\) 当中心像素前一次极性与当前相反，否则为 0；
+- \(r_{good}=u\) 当中心像素前一次极性与当前相同，否则为 0；
+- \(\bar r\)：反极短间隔的 EMA 慢变量；
+- \(R=(r_{bad}+\bar r)/2\)：中心翻转压力；
+- \(s=n_{support}/n_{possible}\)：空间支持率；
+- \(b\)：\(u_{eff}\) 的 EMA 慢变量。
+
+n175/n176 的主公式可写为：
+
+\[
+\alpha=(1-\bar m)^2(1-R/3)
+\]
+
+\[
+u_{eff}=\operatorname{clip}_{[0,1]}
+\left[
+u\cdot \max(1/4,1-k_s s)\cdot (1+k_m m)\cdot (1+R/2-r_{good}/4)
+\right]
+\]
+
+\[
+b\leftarrow b+(u_{eff}-b)/N
+\]
+
+\[
+score=\frac{E_s+\alpha E_o}{1+u_{eff}^2}
+\cdot
+\operatorname{clip}_{[1,2]}\left[1+b s(1+r_{good}/4)\right]
+\]
+
+其中 n175 与 n176 只在两个固定分数常量上不同：
+
+| variant | \(k_s\) | \(k_m\) | 解释 |
+|---|---:|---:|---|
+| n175 | \(2/3\) | \(1/5\) | 支持率 relief 与混极增益较均衡 |
+| n176 | \(4/5\) | \(1/8\) | 更强调空间支持 relief，弱化混极项对中心抑制的放大 |
+
+因此 n176 没有新增运行时超参数，仍是固定公式。
+
+#### 24.36.4 n176 的设计解释
+
+n175 的 heavy 分段结果已经说明：高噪声段中，强中心短间隔抑制有助于压噪，但也会误伤一部分连续边缘事件。n176 的思路是：
+
+1. 当空间支持率 \(s\) 高时，事件更像真实结构边缘，因此使用 \(k_s=4/5\) 让 \(u_{eff}\) 更快被支持率 relief 拉低；
+2. 局部混极比例 \(m\) 在边缘附近不一定完全是坏信号，因此把 \(k_m\) 从 \(1/5\) 降到 \(1/8\)，避免 mixed-polarity 区域过度影响中心抑制；
+3. 保留 n175 的 \(R/3\)、\(R/2\)、\(r_{good}/4\) 等节律分数项，不再继续增加新慢变量或新状态数组。
+
+这不是大改算法，而是对 n175 的固定常量做更实时友好的保守调整。
+
+#### 24.36.5 实验口径与命令（compact400k）
+
+- `max-events=400000`
+- `tick_ns=1000.0`
+- `s in {5,7,9}`
+- `tau_us in {32000,64000,128000,256000}`
+- `esr-mode=off, aocc-mode=off`
+
+```powershell
+$env:PYTHONNOUSERSITE='1'
+$env:PYTHONPATH='D:\hjx_workspace\scientific_reserach\projects\myEVS\src'
+
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/ED24_alg_evalu/sweep_ebf_slim_labelscore_grid.py `
+	--variant n176 --max-events 400000 --s-list 5,7,9 --tau-us-list 32000,64000,128000,256000 `
+	--esr-mode off --aocc-mode off `
+	--out-dir data/ED24/myPedestrain_06/EBF_Part2/_slim_n176_20260427_realtime_relief_compact400k
+
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/noise_analyze/segment_f1.py `
+	--labeled-npy D:/hjx_workspace/scientific_reserach/dataset/ED24/myPedestrain_06/Pedestrain_06_3.3.npy `
+	--variant n176 --s 9 --tau-us 128000 --max-events 400000 --segment-events 200000 `
+	--roc-csv data/ED24/myPedestrain_06/EBF_Part2/_slim_n176_20260427_realtime_relief_compact400k/roc_ebf_n176_heavy_labelscore_s5_7_9_tau32_64_128_256ms.csv `
+	--out-csv data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/segf1_n176_20260427_heavy_compact400k_s9_tau128.csv
+```
+
+速度测试命令：
+
+```powershell
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/noise_analyze/bench_variant_runtime.py `
+	--labeled-npy D:/hjx_workspace/scientific_reserach/dataset/ED24/myPedestrain_06/Pedestrain_06_3.3.npy `
+	--variant-list n175,n176 --s 9 --tau-us 128000 --max-events 400000 --repeats 7 --tick-ns 1000.0 `
+	--out-csv data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/runtime_n175_n176_20260427_heavy_compact400k_s9_tau128.csv
+```
+
+#### 24.36.6 主指标结果
+
+| variant | mean AUC | mean F1 | heavy best-F1 |
+|---|---:|---:|---:|
+| n149（2.8） | 0.944325 | 0.846442 | 0.769616 |
+| n171 | 0.944352 | 0.845923 | 0.769356 |
+| n175 | 0.944419 | 0.846265 | 0.770240 |
+| n176 | **0.944428** | **0.846527** | **0.770728** |
+
+delta（n176 相对 n175）：
+
+1. `mean AUC +0.000009`
+2. `mean F1 +0.000262`
+3. `heavy best-F1 +0.000488`
+
+各环境 best-F1：
+
+| env | n175 best-F1 | n176 best-F1 | delta | n176 best tag |
+|---|---:|---:|---:|---|
+| light | 0.956356 | 0.956281 | -0.000075 | `s9_tau256000` |
+| mid | 0.812198 | 0.812573 | +0.000375 | `s9_tau128000` |
+| heavy | 0.770240 | 0.770728 | +0.000488 | `s9_tau128000` |
+
+解读：
+
+1. n176 的平均提升很小，但方向稳定：mid/heavy 提升，light 极小回退；
+2. n176 不应被描述成“显著突破”，更适合描述为 n175 的微调版；
+3. 若论文需要更稳的结论，仍建议固定 n176 后增加独立数据集复评。
+
+#### 24.36.7 heavy 分段（2×200k；s=9,tau=128ms）
+
+| variant | seg0 F1 | seg0 noise_kept_rate | seg0 signal_kept_rate | seg1 F1 | seg1 noise_kept_rate | seg1 signal_kept_rate |
+|---|---:|---:|---:|---:|---:|---:|
+| n175 | 0.809358 | 0.036300 | 0.778893 | 0.682493 | 0.020618 | 0.620983 |
+| n176 | **0.809542** | **0.034346** | 0.773850 | **0.683081** | **0.018912** | 0.613269 |
+
+delta（n176 相对 n175）：
+
+1. seg0：`F1 +0.000184`，`noise_kept_rate -0.001954`；
+2. seg1：`F1 +0.000588`，`noise_kept_rate -0.001706`。
+
+说明：n176 在 heavy 两个 segment 都降低了噪声保留率，代价是 signal kept rate 略降，但阈值选择后 F1 小幅提升。
+
+#### 24.36.8 速度与实时性测试
+
+速度测试只统计 scoring kernel 调用，已经先 warm-up，不包含 `.npy` 读取、CSV 写出、ROC 排序。该口径适合比较算法核心吞吐，但还不是完整在线系统延迟。
+
+固定 `s=9,tau=128ms,max-events=400000`：
+
+| variant | best seconds | mean seconds | best events/s | mean events/s |
+|---|---:|---:|---:|---:|
+| n175（缓存后） | 0.253348 | 0.260710 | 1,578,857 | 1,534,274 |
+| n176 | 0.255803 | 0.263021 | 1,563,706 | 1,520,790 |
+
+n176 随窗口大小的吞吐：
+
+| variant | s | tau_us | best seconds | best events/s |
+|---|---:|---:|---:|---:|
+| n176 | 5 | 128000 | 0.087050 | 4,595,055 |
+| n176 | 7 | 128000 | 0.151482 | 2,640,579 |
+| n176 | 9 | 128000 | 0.242759 | 1,647,725 |
+
+结论：
+
+1. n175 的缓存优化是纯工程优化，主要减少重复构造 dispatcher/LUT 的开销，不改变 n175 公式；
+2. n176 与 n175 的核心计算量基本相同，因此速度接近；
+3. 当前 Numba 单线程 scoring 在 `s=9` 下约 `1.5~1.6M events/s`，`s=5` 下约 `4.6M events/s`，还不能支撑“十几 M events/s”的实时论断；
+4. 要达到 `10M+ events/s`，仅靠分数常量微调不够，需要 C/C++ 实现、持久化流式状态、边界 fast path、减少邻域访问，或两级筛选结构。
+
+#### 24.36.9 资源占用
+
+n176 复用 n175 的状态布局，不新增 dense state：
+
+| variant | 持久数组 | bytes | KiB |
+|---|---|---:|---:|
+| n175 | `last_ts(uint64)` + `last_pol(int8)` | 809,640 | 790.664 |
+| n176 | `last_ts(uint64)` + `last_pol(int8)` | 809,640 | 790.664 |
+
+因此 n176 的内存占用相对 n175 不变，相对 n149 仍节省约 `351.406 KiB`。
+
+#### 24.36.10 关于 Numba、C/C++ 与论文实时性表述
+
+1. **Numba 加速可以写进论文吗？**
+   可以，但建议写成实现细节或工程加速，不要写成算法贡献。论文中应同时给出算法伪代码或公式，使算法不依赖 Numba 才能理解和复现。
+
+2. **Numba 加速后的结果能否作为实时性证据？**
+   可以作为“在某 CPU、某 Python/Numba 版本、某输入规模下的工程吞吐证据”，但证据强度有限。必须写清楚硬件、线程数、是否排除 JIT 首次编译、是否排除 I/O、事件批大小、输入事件率和端到端延迟。仅有离线 batch 的 events/s，不能直接等价为在线实时。
+
+3. **用 C/C++ 实现并测每秒处理事件量，能否作为判断实时的依据？**
+   可以，而且比 Numba 更适合支撑实时性论断。更严谨的口径是：在目标硬件上用固定编译选项测 sustained throughput，同时测 per-chunk latency，并证明吞吐高于传感器输入事件率且留有余量。
+
+4. **C/C++ 一定比 Numba 快吗？**
+   不一定，但通常更容易快。一个写得好的 Numba `nopython` loop 可以接近 C 的单线程性能；但 C/C++ 更容易做持久状态、内存布局控制、边界 fast path、SIMD、OpenMP、多线程和固定点优化。当前 `s=9` Numba 只有约 `1.5~1.6M events/s`，如果目标是 `10M+ events/s`，建议转 C/C++ 或 C++/CUDA，同时减少邻域访问。
+
+5. **算法优化后的结果能否作为实时性依据？**
+   精度提升本身不能作为实时性依据。只有当算法结构减少了邻域访问、状态访问、分支或除法，并且给出吞吐和延迟实测时，才能作为实时性证据。本轮 n176 是精度微调，实时性证据主要来自 n175 缓存优化和 runtime benchmark，而不是来自 n176 的 F1 提升。
+
+#### 24.36.11 关于分数常量、超参数和除法
+
+1. **分数常量是否需要继续调参？**
+   不建议把这些分数都开放成超参数。n176 只固定替换 \(k_s=4/5,k_m=1/8\)，保持公式可解释和可复现。若后续要调，建议只做一次小网格 ablation，固定最终常量后在独立数据集直接复评，不按场景回调参。
+
+2. **公式里分数多，会不会导致超参数过多？**
+   如果分数是固定先验常量，就不是运行时超参数；如果每个分数都通过验证集独立寻优，就会变成超参数膨胀。论文写法上应强调这些是固定 rational constants，并给出少量 ablation 说明为什么选这一组。
+
+3. **除法运算是否需要优化？**
+   需要注意，但当前最大瓶颈仍是邻域访问、边界判断和状态数组读写。`s=9` 的邻域候选约 80 个，远多于每事件的几个标量除法。C/C++ 版本中应把常量除法改成乘倒数，例如 `1/N`、`1/tau`、interior 区域的 `1/n_possible`；`1/(1+u_eff^2)` 可保留浮点除法，也可在固定点实现中改查表或近似。
+
+4. **哪些优化最可能把速度推向 10M+ events/s？**
+   优先级应是：减少 `s=9` 邻域访问；增加 interior fast path，避免每个邻居做边界判断；C/C++ 持久流式状态，避免 Python 层反复调度；预计算 offset/weight；按数据布局优化 cache；必要时用 SIMD/多线程。单纯把 `1/3,1/4,1/5` 写成小数或分数，对速度帮助很小。
+
+#### 24.36.12 本轮结论
+
+1. n176 是目前 compact400k 协议下的最新最佳版本：`mean AUC=0.944428`，`mean F1=0.846527`，`heavy best-F1=0.770728`；
+2. n176 相对 n175 的提升很小，但没有新增状态，也没有新增运行时超参数；
+3. n175 的缓存优化是必要的工程修正，但当前 Numba 单线程速度仍达不到 `10M+ events/s`；
+4. 若论文主张实时性，下一步应固定 n176，写 C/C++ 流式版本，并报告目标硬件上的 sustained events/s 与 per-chunk latency。
+
+产物目录：
+
+- `data/ED24/myPedestrain_06/EBF_Part2/_slim_n176_20260427_realtime_relief_compact400k/`
+- `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/segf1_n176_20260427_heavy_compact400k_s9_tau128.csv`
+- `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/runtime_n175_n176_20260427_heavy_compact400k_s9_tau128.csv`
+- `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/runtime_n176_20260427_heavy_compact400k_s5_tau128.csv`
+- `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/runtime_n176_20260427_heavy_compact400k_s7_tau128.csv`
+- `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/runtime_n176_20260427_heavy_compact400k_s9_tau128.csv`
+
+### 24.37 2026-04-27：C++ n176 移植、时间尺度 EMA/inner-outer 弱项复核、去空间高斯核对照
+
+#### 24.37.1 本轮问题
+
+本轮复核三个问题：
+
+1. 之前提到的“时间尺度 EMA”和“inner/outer balanced support 弱项”是否能继续提升 n176；
+2. 把目前最好的 n176 用 C++ 实现后，核心 throughput 能到什么水平；
+3. 去掉空间高斯核、改成 uniform 空间权重，能否明显提高实时性。
+
+#### 24.37.2 C++ 实现口径
+
+新增文件：
+
+1. `cpp/ebf_n176_bench.cpp`
+   - C++17 实现 n176 主公式；
+   - 输入为紧凑二进制事件流；
+   - 输出 float32 score；
+   - 计时只覆盖 C++ scoring，不包含 Python 读 `.npy`、导出二进制和 ROC 计算；
+   - 支持 ablation 开关：`uniform_space`、`ema_tau_us`、`io_gain`。
+2. `scripts/noise_analyze/export_labeled_bin.py`
+   - 把 labeled `.npy` 导出为 C++ 直接读取的紧凑二进制。
+3. `scripts/noise_analyze/eval_cpp_scores.py`
+   - 读取 C++ score 和二进制内的 label，计算 AUC/best-F1。
+
+编译命令：
+
+```powershell
+D:\software\Qt\Tools\mingw1310_64\bin\g++.exe -O3 -std=c++17 -march=native -DNDEBUG `
+	cpp\ebf_n176_bench.cpp `
+	-o data\ED24\myPedestrain_06\EBF_Part2\noise_analyze\ebf_n176_bench.exe
+```
+
+运行动态链接版 exe 时需要：
+
+```powershell
+$env:PATH='D:\software\Qt\Tools\mingw1310_64\bin;' + $env:PATH
+```
+
+同时也编译了静态链接版：
+
+```powershell
+D:\software\Qt\Tools\mingw1310_64\bin\g++.exe -O3 -std=c++17 -march=native -DNDEBUG -static -static-libgcc -static-libstdc++ `
+	cpp\ebf_n176_bench.cpp `
+	-o data\ED24\myPedestrain_06\EBF_Part2\noise_analyze\ebf_n176_bench_static.exe
+```
+
+静态版更容易复现运行环境，但本机 heavy `s=9,tau=128ms` 单次测试约 `1.72M events/s`，低于动态链接版，因此下面主表使用动态链接版。
+
+#### 24.37.3 数据导出命令
+
+```powershell
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/noise_analyze/export_labeled_bin.py `
+	--labeled-npy D:/hjx_workspace/scientific_reserach/dataset/ED24/myPedestrain_06/Pedestrain_06_1.8.npy `
+	--max-events 400000 `
+	--out-bin data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/cpp_light_compact400k.bin
+
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/noise_analyze/export_labeled_bin.py `
+	--labeled-npy D:/hjx_workspace/scientific_reserach/dataset/ED24/myPedestrain_06/Pedestrain_06_2.5.npy `
+	--max-events 400000 `
+	--out-bin data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/cpp_mid_compact400k.bin
+
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/noise_analyze/export_labeled_bin.py `
+	--labeled-npy D:/hjx_workspace/scientific_reserach/dataset/ED24/myPedestrain_06/Pedestrain_06_3.3.npy `
+	--max-events 400000 `
+	--out-bin data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/cpp_heavy_compact400k.bin
+```
+
+导出后事件数：
+
+| env | events |
+|---|---:|
+| light | 194,395 |
+| mid | 400,000 |
+| heavy | 400,000 |
+
+#### 24.37.4 C++ n176 精度核对
+
+C++ 版本用 `s=9`，light 使用 `tau=256ms`，mid/heavy 使用 `tau=128ms`。
+
+| env | C++ AUC | C++ best-F1 | Python/Numba n176 best-F1 | 说明 |
+|---|---:|---:|---:|---|
+| light | 0.954814 | 0.956303 | 0.956281 | 对齐 |
+| mid | 0.934451 | 0.812608 | 0.812573 | 对齐 |
+| heavy | 0.931929 | 0.770804 | 0.770728 | 对齐 |
+
+结论：C++ 移植后的 score 排序与 Python/Numba n176 基本一致，可以用于后续实时性评估。
+
+#### 24.37.5 C++ n176 吞吐
+
+动态链接版，`-O3 -march=native`，`repeats=7`，只统计 scoring：
+
+| env | s | tau_us | best seconds | mean seconds | best events/s | mean events/s |
+|---|---:|---:|---:|---:|---:|---:|
+| light | 9 | 256000 | 0.086579 | 0.090541 | 2,245,290 | 2,147,030 |
+| mid | 9 | 128000 | 0.192687 | 0.200857 | 2,075,910 | 1,991,460 |
+| heavy | 9 | 128000 | 0.209508 | 0.221167 | 1,909,240 | 1,808,590 |
+
+heavy 下窗口大小缩放：
+
+| s | tau_us | best seconds | mean seconds | best events/s | mean events/s |
+|---:|---:|---:|---:|---:|---:|
+| 5 | 128000 | 0.074055 | 0.080899 | 5,401,380 | 4,944,420 |
+| 7 | 128000 | 0.138598 | 0.144342 | 2,886,050 | 2,771,200 |
+| 9 | 128000 | 0.209508 | 0.221167 | 1,909,240 | 1,808,590 |
+
+与 Numba 对比：
+
+1. heavy `s=9`：C++ best 约 `1.91M events/s`，Numba best 约 `1.56~1.65M events/s`；
+2. heavy `s=5`：C++ best 约 `5.40M events/s`，Numba best 约 `4.60M events/s`；
+3. 当前 C++ 单线程仅比 Numba 快约 `1.2x` 左右，说明瓶颈主要不是 Python 调度，而是每事件邻域访问、分支和状态内存访问。
+
+结论：这个直接 C++ 移植仍不足以支撑 `10M+ events/s`。要达到十几 M/s，必须继续做结构级优化，例如 interior fast path、预展开 offset、减少 `s=9` 邻域、SIMD/多线程、或两级粗筛。
+
+#### 24.37.6 去掉空间高斯核的结果
+
+对照：heavy，`s=9,tau=128ms`，C++ n176。
+
+| variant | AUC | best-F1 | best events/s | mean events/s |
+|---|---:|---:|---:|---:|
+| n176 + Gaussian space LUT | 0.931929 | **0.770804** | **1,909,240** | 1,808,590 |
+| n176 + uniform space | 0.929373 | 0.759571 | 1,904,140 | **1,812,260** |
+
+结论：
+
+1. 去掉空间高斯核没有明显提速，本次 heavy `s=9` best throughput 反而略低，mean 只是在噪声范围内略高；
+2. best-F1 从 `0.770804` 降到 `0.759571`，下降 `0.011233`，代价很大；
+3. 原因是当前实现已经把空间高斯做成 `d^2 -> LUT`，每邻居只查表一次，真正耗时的是邻域循环和状态数组访问，不是 `exp`；
+4. 因此不建议为了实时性移除空间高斯核。它是精度贡献项，不是主要速度瓶颈。
+
+#### 24.37.7 时间尺度 EMA 复核
+
+定义：把 n176 中 `mstate/rstate/b` 的固定事件数 EMA
+
+\[
+x \leftarrow x + (obs-x)/4096
+\]
+
+改成按事件间隔更新：
+
+\[
+\alpha_t=\operatorname{clip}\left(\frac{t_i-t_{i-1}}{\tau_{ema}},\frac{1}{65536},1\right),
+\quad x\leftarrow x+\alpha_t(obs-x)
+\]
+
+heavy，`s=9,tau=128ms`，C++ ablation：
+
+| variant | AUC | best-F1 | delta F1 vs C++ n176 |
+|---|---:|---:|---:|
+| C++ n176 baseline | 0.931929 | **0.770804** | 0 |
+| time EMA, `tau_ema=32ms` | 0.931898 | 0.770788 | -0.000016 |
+| time EMA, `tau_ema=64ms` | 0.931692 | 0.770008 | -0.000796 |
+| time EMA, `tau_ema=128ms` | 0.931274 | 0.768863 | -0.001940 |
+
+结论：
+
+1. `tau_ema=32ms` 基本追平但没有超过 baseline；
+2. 时间常数变长后明显变差，说明当前固定事件数 EMA 反而更适合这组数据；
+3. 时间尺度 EMA 会新增时间常数选择问题，收益不足，不建议接入当前最佳 n176。
+
+#### 24.37.8 inner/outer balanced support 弱项复核
+
+定义：按内圈/外圈能量构造弱结构项：
+
+\[
+q=\frac{E_{outer}}{E_{inner}+E_{outer}+\epsilon},\quad
+B=4q(1-q)
+\]
+
+\[
+score'=score\cdot \operatorname{clip}_{[0.75,1.25]}\left(1+g(B-0.5)\right)
+\]
+
+其中 `inner` 使用 `d^2<=4`，`outer` 为其余邻居。heavy，`s=9,tau=128ms`，C++ ablation：
+
+| variant | AUC | best-F1 | delta F1 vs C++ n176 |
+|---|---:|---:|---:|
+| C++ n176 baseline | 0.931929 | **0.770804** | 0 |
+| io weak, `g=1/16` | 0.931574 | 0.770352 | -0.000452 |
+| io weak, `g=1/8` | 0.931137 | 0.770064 | -0.000740 |
+| io weak, `g=1/4` | 0.930038 | 0.768892 | -0.001912 |
+| time EMA 128ms + io weak 1/8 | 0.930498 | 0.768005 | -0.002799 |
+
+结论：
+
+1. inner/outer balance 在早期统计里是有信息量的特征，但接到 n176 当前 score 后没有增益；
+2. 弱项越强越差，说明它与 n176 已有的空间高斯、支持率 \(s\)、混极 \(m\) 存在信息重叠；
+3. 当前不建议把 inner/outer balanced support 作为 n176 的正式项，否则会增加公式复杂度且降低 F1。
+
+#### 24.37.9 本轮结论
+
+1. n176 仍是当前主线最佳算法；时间尺度 EMA 和 inner/outer weak support 已复核，均未超过 n176；
+2. C++ 直接移植能验证算法可脱离 Numba 运行，但单线程吞吐仍只有约 `1.9M events/s`（heavy `s=9`），没有达到实时目标；
+3. 去掉空间高斯核不能带来有效提速，并且 heavy F1 大幅下降，不推荐；
+4. 下一步若目标是 `10M+ events/s`，不要继续在公式上加弱项，应做实现结构优化：预计算 offset/weight、interior fast path、减少邻域半径或两级筛选、多线程/SIMD。
+
+产物：
+
+- `cpp/ebf_n176_bench.cpp`
+- `scripts/noise_analyze/export_labeled_bin.py`
+- `scripts/noise_analyze/eval_cpp_scores.py`
+- `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/ebf_n176_bench.exe`
+- `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/ebf_n176_bench_static.exe`
+- `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/cpp_eval_n176_20260427.csv`

@@ -33,6 +33,7 @@ from .ops.evflow import EvFlowOp
 from .ops.ynoise import YnoiseOp
 from .ops.ts import TsOp
 from .ops.mlpf import MlpfOp
+from .ops.pfd import PfdOp
 from .ops.hotpixel import HotPixelOp
 from .ops.fastdecay import FastDecayOp
 from .ops.ratelimit import RateLimitOp
@@ -60,6 +61,7 @@ _METHOD_ID_TO_NAME = {
     14: "ynoise",  # YangNoise (cuke-emlb)
     15: "ts",  # TimeSurface (cuke-emlb)
     16: "mlpf",  # MLP-inspired lightweight proxy (cuke-emlb aligned features)
+    17: "pfd",  # Polarity-Focused Denoising (PFD/PFDs)
 }
 
 _NAME_TO_METHOD_ID = {v: k for k, v in _METHOD_ID_TO_NAME.items()}
@@ -96,6 +98,7 @@ def _normalize_method_token(token: str) -> str:
         "14": "ynoise",
         "15": "ts",
         "16": "mlpf",
+        "17": "pfd",
         "rate": "ratelimit",
         "global": "globalgate",
         "dg": "dp",
@@ -110,6 +113,8 @@ def _normalize_method_token(token: str) -> str:
         "eventflow": "evflow",
         "yangnoise": "ynoise",
         "timesurface": "ts",
+        "polarityfocuseddenoising": "pfd",
+        "pfds": "pfd",
     }
     if t in aliases:
         return aliases[t]
@@ -181,6 +186,8 @@ def _build_ops(meta: EventStreamMeta, cfg: DenoiseConfig, tb: TimeBase) -> tuple
             ops.append(TsOp(dims, cfg, tb))
         elif t == "mlpf":
             ops.append(MlpfOp(dims, cfg, tb))
+        elif t == "pfd":
+            ops.append(PfdOp(dims, cfg, tb))
         else:
             raise ValueError(f"Unknown denoise method token: {t!r}")
 
@@ -379,7 +386,64 @@ def denoise_stream(
                     yield EventBatch(t=t_arr[keep], x=b.x[keep], y=b.y[keep], p=p_arr[keep])
             return
 
-        raise ValueError("engine='numba' currently supports stc / ts / evflow without pipeline")
+        if tokens[0] == "pfd":
+            try:
+                from .numba_pfd import is_numba_available, pfd_keep_mask_numba, pfd_state_init
+            except Exception as e:  # pragma: no cover
+                raise RuntimeError(f"Failed to import numba backend: {type(e).__name__}: {e}")
+
+            if not is_numba_available():
+                raise RuntimeError("Numba is not available. Install it (conda-forge: numba) or use --engine python.")
+
+            w = int(meta.width)
+            h = int(meta.height)
+            last_on, last_off, last_pol, last_evt, flip_buf, flip_head, flip_count = pfd_state_init(w, h, fifo_size=5)
+
+            r = max(1, min(int(cfg.radius_px), 8))
+            win_ticks = int(tb.us_to_ticks(int(cfg.time_window_us)))
+            neigh_thr = float(cfg.min_neighbors)
+            stage1_var = int(cfg.refractory_us)
+            mode = str(getattr(cfg, "pfd_mode", "a") or "a").strip().lower()
+            mode_b = mode == "b"
+
+            for b in batches:
+                if len(b) == 0:
+                    continue
+
+                t_arr = np.asarray(b.t, dtype=np.uint64)
+                x_arr = np.asarray(b.x, dtype=np.int32)
+                y_arr = np.asarray(b.y, dtype=np.int32)
+                p_arr = np.asarray(b.p, dtype=np.int8)
+
+                keep_u8 = pfd_keep_mask_numba(
+                    t=t_arr,
+                    x=x_arr,
+                    y=y_arr,
+                    p=p_arr,
+                    width=w,
+                    height=h,
+                    show_on=bool(cfg.show_on),
+                    show_off=bool(cfg.show_off),
+                    radius_px=r,
+                    win_ticks=win_ticks,
+                    min_neighbors=neigh_thr,
+                    stage1_var=stage1_var,
+                    mode_b=mode_b,
+                    last_on=last_on,
+                    last_off=last_off,
+                    last_pol=last_pol,
+                    last_evt=last_evt,
+                    flip_buf=flip_buf,
+                    flip_head=flip_head,
+                    flip_count=flip_count,
+                )
+
+                if keep_u8.any():
+                    keep = keep_u8.astype(bool)
+                    yield EventBatch(t=t_arr[keep], x=b.x[keep], y=b.y[keep], p=p_arr[keep])
+            return
+
+        raise ValueError("engine='numba' currently supports stc / ts / evflow / pfd without pipeline")
 
     # Build ops once (they keep state across batches)
     ops, global_gate = _build_ops(meta, cfg, tb)

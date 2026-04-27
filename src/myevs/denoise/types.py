@@ -38,3 +38,8 @@ class DenoiseConfig:
     mlpf_model_path: str = ""
     # Patch size for mlpf feature construction (odd values recommended: 7/9/11).
     mlpf_patch: int = 7
+
+    # === PFD options ===
+    # PFD-A: score = |current_flip - neighbor_flip_mean| <= 1
+    # PFD-B: score = |neighbor_flip_mean| <= 1
+    pfd_mode: str = "a"

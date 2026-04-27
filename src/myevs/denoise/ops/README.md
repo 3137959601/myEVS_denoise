@@ -7,7 +7,7 @@
 - 指标统计与汇总表格式
 
 当前状态（2026-04-23）：
-- 已集成算法：`BAF`, `STCF(stc)`, `EBF`, `EBF_OPTIMIZED`, `KNOISE`, `EVFLOW`, `YNOISE`, `TS`, `MLPF`。
+- 已集成算法：`BAF`, `STCF(stc)`, `EBF`, `EBF_OPTIMIZED`, `KNOISE`, `EVFLOW`, `YNOISE`, `TS`, `MLPF`, `PFD`。
 - `n175` 演化暂停，先做跨数据集横向对比。
 
 ## 1. 路径定义（已核验）
@@ -57,6 +57,7 @@ Driving 数据集（已存在）：
 - `ynoise`（id=14）
 - `ts`（id=15）
 - `mlpf`（id=16）
+- `pfd`（id=17）
 
 参数映射（统一沿用 myEVS 通用参数）：
 - `time-us` -> 算法中的时间窗/衰减参数（duration/decay）
@@ -188,6 +189,32 @@ $$
 \text{keep}_i=\mathbf{1}[S_i\ge \theta_f].
 $$
 
+`PFD`（`src/myevs/denoise/ops/pfd.py`）：
+- 当前实现对齐 `PFDs`（event-by-event 版本），含两级判决。
+- Stage-1（同极性时域支持）：
+$$
+C_i=\sum_{j\in \mathcal{N}_r(i)\setminus\{i\}}
+\mathbf{1}[p_j=p_i]\cdot\mathbf{1}[|t_i-t_j|<\tau],\qquad
+\text{pass1}_i=\mathbf{1}[C_i\ge v].
+$$
+其中 \(v\) 对应 `refractory-us`（本项目默认固定为 1）。
+- Stage-2（极性翻转一致性）：
+设 \(F_i(\tau)\) 为像素 \(i\) 在时间窗 \(\tau\) 内的极性翻转次数，\
+\(A_i=\sum_{j\in\mathcal{N}_r(i)\setminus\{i\}}\mathbf{1}[|t_i-t_j|\le\tau]\) 为活跃邻居数。
+$$
+S_i=\left|F_i(\tau)-\frac{1}{A_i}\sum_{j\in\mathcal{N}_r(i)\setminus\{i\}}F_j(\tau)\right|.
+$$
+$$
+\text{keep}_i=\mathbf{1}\big[\text{pass1}_i\land (A_i>\theta_n)\land (S_i\le 1)\big],
+$$
+其中 \(\theta_n=\texttt{min-neighbors}\)。
+- 模式说明（已实现）：
+1. `pfd_mode=a`（默认，PFD-A）  
+   \(S_i=\left|F_i(\tau)-\frac{1}{A_i}\sum_j F_j(\tau)\right|\)
+1. `pfd_mode=b`（PFD-B）  
+   \(S_i=\left|\frac{1}{A_i}\sum_j F_j(\tau)\right|\)
+1. 当前 ED24 仅跑 `pfd_mode=a`；`pfd_mode=b` 已实现但未在本轮数据中启用（留给闪烁噪声数据集）。
+
 评估指标定义（统一）：
 $$
 \mathrm{TPR}=\frac{\mathrm{TP}}{\mathrm{TP}+\mathrm{FN}},\qquad
@@ -225,6 +252,7 @@ $$
 | EBF | \(O(K)\) | \(O(NK)\) | \(9P\) bytes | 约 \(K-1\) 次；含线性时间权重与累加 | 中 |
 | YNOISE | \(O(K)\) | \(O(NK)\) | \(9P\) bytes | 约 \(K\) 次；硬窗 + 同极性计数 | 中 |
 | TS | \(O(K)\) | \(O(NK)\) | \(16P\) bytes | 约 \(K\) 次 + `exp` | 中-高 |
+| PFD | \(O(K)\)（含两级门控） | \(O(NK)\) | \(\approx 33P\) bytes | 邻域支持 + 翻转计数统计 | 中-高 |
 | MLPF(real/proxy) | \(O(49)+O(\text{MLP forward})\) | \(O(N(49+\text{forward}))\) | \(9P\) bytes + 模型参数 | 固定49点特征 + 前向推理 | 中 |
 | KNOISE | 近似 \(O(1)\) | \(O(N)\) | \(\approx 13(W+H)\) bytes | 固定行列方向检查（常数次） | 低 |
 | EVFLOW | \(O(Q)+O(M)\) | 常见 \(O(N\bar Q)\)，最坏接近 \(O(N^2)\) | \(O(Q)\)（deque） | 遍历窗口事件 + 最小二乘拟合 | 高 |
@@ -237,16 +265,16 @@ $$
 #### 3.2.1 排序（按对比指标）
 
 1. 按时间复杂度（快 -> 慢）  
-`KNOISE` > `MLPF` > `BAF ≈ STCF ≈ YNOISE ≈ EBF ≈ TS ≈ N149` > `EVFLOW`
+`KNOISE` > `MLPF` > `BAF ≈ STCF ≈ YNOISE ≈ EBF ≈ TS ≈ PFD ≈ N149` > `EVFLOW`
 
 1. 按单事件操作量（少 -> 多）  
-`KNOISE` > `BAF` > `YNOISE` > `EBF` > `MLPF` > `STCF` > `TS` > `N149` > `EVFLOW`
+`KNOISE` > `BAF` > `YNOISE` > `EBF` > `MLPF` > `STCF ≈ TS ≈ PFD` > `N149` > `EVFLOW`
 
 1. 按状态内存占用（少 -> 多）  
-`KNOISE` > `EBF ≈ YNOISE ≈ MLPF` > `BAF` > `STCF ≈ TS` > `N149` > `EVFLOW(随Q增长)`
+`KNOISE` > `EBF ≈ YNOISE ≈ MLPF` > `BAF` > `STCF ≈ TS` > `PFD` > `N149` > `EVFLOW(随Q增长)`
 
 1. 按实时风险（低 -> 高）  
-`KNOISE` < `MLPF` < `BAF ≈ YNOISE ≈ EBF` < `STCF ≈ TS ≈ N149` < `EVFLOW`
+`KNOISE` < `MLPF` < `BAF ≈ YNOISE ≈ EBF` < `STCF ≈ TS ≈ PFD ≈ N149` < `EVFLOW`
 
 #### 3.2.2 为什么 EVFLOW 慢（本工程实现）
 
@@ -271,6 +299,7 @@ $$
 - `scripts/ED24_alg_evalu/run_slomo_ynoise.ps1`
 - `scripts/ED24_alg_evalu/run_slomo_ts.ps1`
 - `scripts/ED24_alg_evalu/run_slomo_mlpf.ps1`
+- `scripts/ED24_alg_evalu/run_slomo_pfd.ps1`
 
 运行示例：
 ```powershell
@@ -289,6 +318,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\ED24_alg_evalu\run_slomo_knoi
 - `scripts/driving_alg_evalu/run_driving_ynoise.ps1`
 - `scripts/driving_alg_evalu/run_driving_ts.ps1`
 - `scripts/driving_alg_evalu/run_driving_mlpf.ps1`
+- `scripts/driving_alg_evalu/run_driving_pfd.ps1`
 
 运行示例：
 ```powershell
@@ -323,15 +353,16 @@ Driving 脚本会在每个噪声级目录自动查找：
 - `summarize_fixed_threshold_ebf_optimized_ed24.py`：固定阈值统计
 - `select_best_tag_ebfopt_ed24.py`：从 tag 选择最佳
 - `summarize_horizontal_round1.py`：Round1（BAF/STCF/EBF/N149）横向汇总
-- `summarize_horizontal_round2_new_methods.py`：Round2（KNOISE/EVFLOW/YNOISE/TS/MLPF）横向汇总
+- `summarize_horizontal_round2_new_methods.py`：Round2（KNOISE/EVFLOW/YNOISE/TS/MLPF/PFD）横向汇总
+- `summarize_runtime_ed24.py`：ED24 运行时统一口径汇总（按 level 最新记录统计）
 - `sweep_*.py`/`prescreen_*.py`/`tune_*.py`：各版本候选公式预筛与调参
-- `run_slomo_alg.ps1`（新增）：KNOISE/EVFLOW/YNOISE/TS/MLPF 统一入口
-- `run_slomo_{knoise|evflow|ynoise|ts|mlpf}.ps1`（新增）：单算法入口
+- `run_slomo_alg.ps1`（新增）：KNOISE/EVFLOW/YNOISE/TS/MLPF/PFD 统一入口
+- `run_slomo_{knoise|evflow|ynoise|ts|mlpf|pfd}.ps1`（新增）：单算法入口
 
 ### 5.3 driving_alg_evalu
 
 - `run_driving_alg.ps1`（新增）：Driving 数据集统一入口
-- `run_driving_{knoise|evflow|ynoise|ts|mlpf}.ps1`（新增）：单算法入口
+- `run_driving_{knoise|evflow|ynoise|ts|mlpf|pfd}.ps1`（新增）：单算法入口
 
 ### 5.4 noise_analyze
 
@@ -360,7 +391,7 @@ Driving 脚本会在每个噪声级目录自动查找：
 
 ## 7. 推荐执行顺序
 
-1. 先跑 ED24：`BAF/STCF/EBF + KNOISE/EVFLOW/YNOISE/TS/MLPF`
+1. 先跑 ED24：`BAF/STCF/EBF + KNOISE/EVFLOW/YNOISE/TS/MLPF/PFD`
 2. 再跑 Driving：同样算法集合
 3. 每个算法先看三档噪声（light/mid/heavy）的 AUC 稳定性
 4. 再做跨数据集总表排序，筛选论文主结果算法
@@ -383,7 +414,7 @@ Driving 脚本会在每个噪声级目录自动查找：
 
 说明：以下三张表已经把两轮结果合并在一起。
 - Round1：`BAF / STCF / EBF / N149`
-- Round2：`KNOISE / EVFLOW / YNOISE / TS / MLPF`
+- Round2：`KNOISE / EVFLOW / YNOISE / TS / MLPF / PFD`
 
 数据来源：
 - `data/ED24/myPedestrain_06/horizontal_summary_all.csv`
@@ -401,6 +432,7 @@ Driving 脚本会在每个噪声级目录自动查找：
 | YNOISE | Round2 | 0.933149 | ynoise_r5_tau256000 | 0.948630 | 3.000000 | 1.159098 | 0.821053 |
 | TS | Round2 | 0.870558 | ts_r4_decay128000 | 0.930806 | 0.050000 | 1.434201 | 0.826768 |
 | MLPF | Round2 | 0.866857 | mlpf_tau32000 | 0.943647 | 0.500000 | 1.021404 | 0.824071 |
+| PFD | Round2 | 0.902708 | pfd_r3_tau64000_m1 | 0.908376 | 1.000000 | 0.915288 | 0.793225 |
 
 ### 10.2 mid
 
@@ -415,6 +447,7 @@ Driving 脚本会在每个噪声级目录自动查找：
 | YNOISE | Round2 | 0.908342 | ynoise_r4_tau64000 | 0.808960 | 6.000000 | 1.036820 | 0.783468 |
 | TS | Round2 | 0.852829 | ts_r2_decay32000 | 0.714195 | 0.100000 | 1.600892 | 0.825788 |
 | MLPF | Round2 | 0.814019 | mlpf_tau32000 | 0.659253 | 0.300000 | 1.135691 | 0.817674 |
+| PFD | Round2 | 0.888911 | pfd_r3_tau32000_m3 | 0.794614 | 1.000000 | 0.919803 | 0.800480 |
 
 ### 10.3 heavy
 
@@ -429,6 +462,7 @@ Driving 脚本会在每个噪声级目录自动查找：
 | YNOISE | Round2 | 0.897144 | ynoise_r3_tau64000 | 0.752252 | 6.000000 | 1.015795 | 0.791337 |
 | TS | Round2 | 0.846531 | ts_r2_decay16000 | 0.647695 | 0.100000 | 1.113610 | 0.758223 |
 | MLPF | Round2 | 0.772873 | mlpf_tau32000 | 0.518727 | 0.200000 | 0.949902 | 0.780568 |
+| PFD | Round2 | 0.875718 | pfd_r3_tau32000_m3 | 0.727360 | 5.000000 | 0.931863 | 0.777345 |
 
 ### 10.4 MESR/AOCC 统一口径（ED24）
 
@@ -436,9 +470,19 @@ Driving 脚本会在每个噪声级目录自动查找：
 - `data/ED24/myPedestrain_06/horizontal_summary_all.csv`（用于论文主表，统一采用 `best-f1` 对应的 `MESR/AOCC`）
 - `data/ED24/myPedestrain_06/bestpoint_mesr_aocc_summary.csv`（保留 `best-auc` 与 `best-f1` 两个工作点明细）
 
-当前完整性检查（2026-04-24）：
-- ED24 横向汇总应有 `9 algorithms × 3 levels = 27` 行，当前已齐全。
+当前完整性检查（2026-04-27）：
+- ED24 横向汇总应有 `10 algorithms × 3 levels = 30` 行，当前已齐全。
 - `MESR/AOCC` 在 `horizontal_summary_all.csv` 中已全部可用（无空缺）。
+
+### 10.5 PFD 数据结论（ED24）
+
+- 本轮扫频口径：固定 `r=3`，扫 `Δt(time-us)`、`λ(min-neighbors)`、`m(refractory-us)`。
+- 与论文默认口径不一致说明：论文主实现强调 `3x3(r=1)` 邻域；本工程在 ED24 上 `r=3` 的 AUC/F1 更优，故主表先采用 `r=3` 工程最优口径，同时保留论文口径说明用于复现实验章节。
+- AUC 对比（PFD）：`light=0.902708`, `mid=0.888911`, `heavy=0.875718`。  
+在 `mid/heavy` 上明显高于 `EVFLOW/TS/KNOISE/MLPF`，但低于 `YNOISE/EBF/N149`。
+- F1 对比（PFD）：`light=0.908376`, `mid=0.794614`, `heavy=0.727360`。  
+在 `mid/heavy` 上稳定高于 `TS/EVFLOW/KNOISE/MLPF`，与 `STCF` 接近或略优。
+- 代价侧：旧版纯 Python 扫频确实很慢；本轮改为 `numba` 后，PFD 三档平均运行时已降到约 `76.418s/档`（coarse 网格）。论文中的“实时”来自 C++/FPGA 实现，本工程当前仍是 Python + numba 版本。
 
 ## 11. N147 补充结果（EBF_Part2 / compact400k）
 
@@ -453,20 +497,35 @@ Driving 脚本会在每个噪声级目录自动查找：
 
 ## 12. 运行时统计（ED24）
 
-运行时汇总文件：
-- `data/ED24/myPedestrain_06/runtime_wallclock_estimate_ed24_targetfiles.csv`
+统一口径（避免“分钟/秒混用”）：
+1. 每个算法读取各自 `runtime_*.csv`；
+2. 对 `light/mid/heavy` 每个 level 只取“最新一条”记录；
+3. 统计 `avg_sec_per_level`（每档平均秒数）和 `sum_sec_3levels`（三档总秒数）。
 
-| Algorithm | Runtime (sec, approx) |
-|---|---:|
-| KNOISE | 2.949 |
-| EVFLOW | 27.252 |
-| YNOISE | 21.244 |
-| TS | 23.948 |
-| MLPF | 10.225 |
-| BAF | 7.133 |
-| STCF | 8.434 |
-| N149 | 1.316 |
-| EBF | 0.460 |
+统一汇总文件：
+- `data/ED24/myPedestrain_06/runtime_unified_ed24.csv`
+
+生成命令：
+```powershell
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/ED24_alg_evalu/summarize_runtime_ed24.py
+```
+
+| Algorithm | light(s) | mid(s) | heavy(s) | avg_sec_per_level | sum_sec_3levels |
+|---|---:|---:|---:|---:|---:|
+| EBF | 14.035 | 17.324 | 20.545 | 17.301 | 51.904 |
+| N149 | 55.374 | 61.798 | 67.643 | 61.605 | 184.815 |
+| TS | 16.654 | 24.341 | 30.248 | 23.748 | 71.243 |
+| PFD | 34.418 | 72.914 | 121.923 | 76.418 | 229.255 |
+| BAF | 55.613 | 172.831 | 265.363 | 164.602 | 493.807 |
+| STCF |  |  |  |  |  |
+| KNOISE | 85.460 | 238.140 | 376.325 | 233.308 | 699.925 |
+| EVFLOW | 174.066 | 548.679 | 1239.166 | 653.970 | 1961.911 |
+| YNOISE | 275.119 | 777.092 | 1234.050 | 762.087 | 2286.261 |
+| MLPF | 428.342 | 1239.780 | 578.035 | 748.719 | 2246.157 |
+
+注：
+- `STCF` 当前缺 `runtime_stcf.csv`，因此留空；补跑 `run_slomo_stcf.ps1` 后可自动纳入统一表。
+- 在这个统一口径下，`PFD` 不是最慢算法，明显慢于 PFD 的是 `EVFLOW/YNOISE/MLPF`。
 
 后续新增实验必须同步记录 runtime，推荐写入以下脚本的 runtime CSV：
 - `scripts/ED24_alg_evalu/run_slomo_alg.ps1`
@@ -490,7 +549,7 @@ Driving 脚本会在每个噪声级目录自动查找：
 1. EBF Part2 变体：继续使用原 sweep 脚本原生开关。
 - `scripts/ED24_alg_evalu/sweep_ebf_slim_labelscore_grid.py`
 - `scripts/ED24_alg_evalu/sweep_ebf_labelscore_grid.py`
-2. 横向对比算法（BAF/STCF/EBF/N149/KNOISE/EVFLOW/YNOISE/TS/MLPF）：统一使用后评估脚本。
+2. 横向对比算法（BAF/STCF/EBF/N149/KNOISE/EVFLOW/YNOISE/TS/MLPF/PFD）：统一使用后评估脚本。
 - `scripts/eval_bestpoint_mesr_aocc.py`
 - 该脚本从 ROC CSV 自动选 `best-AUC`/`best-F1` 参数点并计算 `MESR/AOCC`。
 
@@ -517,6 +576,7 @@ Driving 脚本会在每个噪声级目录自动查找：
 - `EVFLOW`：每个 `r` 仅绘制 AUC 最优 `3` 条曲线。
 - `YNOISE`：每个 `r` 仅绘制 AUC 最优 `3` 条曲线。
 - `TS`：每个 `r` 仅绘制 AUC 最优 `3` 条曲线。
+- `PFD`：每个 `r` 仅绘制 AUC 最优 `3` 条曲线。
 - `MLPF`：全局仅绘制 AUC 最优 `4` 条（按 `tau` 标签筛选）。
 
 ### 14.1 连续扫频（Dense）策略
@@ -530,7 +590,7 @@ Driving 脚本会在每个噪声级目录自动查找：
 
 建议：
 - `EVFLOW`：优先使用 `dense`，原因是其 ROC 对阈值/时间窗更敏感，稀疏阈值容易导致曲线点过于集中。
-- `TS`、`YNOISE`、`MLPF`：当你发现 best 点贴近阈值边界、或曲线锯齿明显时，再切 `dense`。
+- `TS`、`YNOISE`、`MLPF`、`PFD`：当你发现 best 点贴近阈值边界、或曲线锯齿明显时，再切 `dense`。
 - `KNOISE`：通常 `coarse` 已足够；只有在论文图需要精细局部曲线时再用 `dense`。
 
 ## 15. 脚本使用方法（完整）
@@ -540,14 +600,14 @@ Driving 脚本会在每个噪声级目录自动查找：
 `run_slomo_alg.ps1` 支持全量、单算法、多算法：
 
 ```powershell
-# 默认：跑全部（knoise/evflow/ynoise/ts/mlpf）
+# 默认：跑全部（knoise/evflow/ynoise/ts/mlpf/pfd）
 powershell -ExecutionPolicy Bypass -File ./scripts/ED24_alg_evalu/run_slomo_alg.ps1
 
 # 单算法（兼容参数）
 powershell -ExecutionPolicy Bypass -File ./scripts/ED24_alg_evalu/run_slomo_alg.ps1 -Algorithm knoise
 
 # 多算法
-powershell -ExecutionPolicy Bypass -File ./scripts/ED24_alg_evalu/run_slomo_alg.ps1 -Algorithms knoise,ts,mlpf
+powershell -ExecutionPolicy Bypass -File ./scripts/ED24_alg_evalu/run_slomo_alg.ps1 -Algorithms knoise,ts,mlpf,pfd
 
 # 显式全量
 powershell -ExecutionPolicy Bypass -File ./scripts/ED24_alg_evalu/run_slomo_alg.ps1 -Algorithms all
@@ -556,7 +616,7 @@ powershell -ExecutionPolicy Bypass -File ./scripts/ED24_alg_evalu/run_slomo_alg.
 powershell -ExecutionPolicy Bypass -File ./scripts/ED24_alg_evalu/run_slomo_alg.ps1 -Algorithms evflow -SweepProfile dense
 
 # 多算法连续扫频
-powershell -ExecutionPolicy Bypass -File ./scripts/ED24_alg_evalu/run_slomo_alg.ps1 -Algorithms evflow,ts,mlpf -SweepProfile dense
+powershell -ExecutionPolicy Bypass -File ./scripts/ED24_alg_evalu/run_slomo_alg.ps1 -Algorithms evflow,ts,mlpf,pfd -SweepProfile dense
 ```
 
 ### 15.1.1 Driving 新算法总入口（支持 dense）
@@ -570,6 +630,7 @@ powershell -ExecutionPolicy Bypass -File ./scripts/driving_alg_evalu/run_driving
 
 # 其他算法 dense 示例
 powershell -ExecutionPolicy Bypass -File ./scripts/driving_alg_evalu/run_driving_alg.ps1 -Algorithm ts -SweepProfile dense
+powershell -ExecutionPolicy Bypass -File ./scripts/driving_alg_evalu/run_driving_alg.ps1 -Algorithm pfd -SweepProfile dense
 ```
 
 ### 15.2 ED24 传统算法入口
@@ -612,6 +673,12 @@ D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/eval_bestpoint_mesr_aocc
 
 # ED24：一次算多个算法
 D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/eval_bestpoint_mesr_aocc.py --dataset ed24 --algorithms baf,stcf,ebf,knoise
+
+# ED24：只算 PFD
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/eval_bestpoint_mesr_aocc.py --dataset ed24 --algorithms pfd
+
+# ED24：PFD-B（实现已支持，后续闪烁噪声数据集使用）
+D:/software/Anaconda_envs/envs/myEVS/python.exe -m myevs.cli roc --clean <clean.npy> --noisy <noisy.npy> --assume npy --width 346 --height 260 --method pfd --pfd-mode b --engine numba --radius-px 1 --time-us 32000 --refractory-us 1 --param min-neighbors --values 1,2,3 --out-csv <out.csv>
 
 # ED24：真实 MLPF（按 level 自动套模型）
 D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/eval_bestpoint_mesr_aocc.py --dataset ed24 --algorithms mlpf --mlpf-model-pattern "data/ED24/myPedestrain_06/MLPF/mlpf_torch_{level}.pt"

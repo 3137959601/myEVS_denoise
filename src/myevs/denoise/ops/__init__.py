@@ -23,6 +23,7 @@ from .evflow import EvFlowOp
 from .ynoise import YnoiseOp
 from .ts import TsOp
 from .mlpf import MlpfOp
+from .pfd import PfdOp
 
 __all__ = [
     "DenoiseOp",
@@ -40,4 +41,5 @@ __all__ = [
     "YnoiseOp",
     "TsOp",
     "MlpfOp",
+    "PfdOp",
 ]

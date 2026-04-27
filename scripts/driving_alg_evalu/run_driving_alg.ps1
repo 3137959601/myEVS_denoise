@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet("knoise", "evflow", "ynoise", "ts", "mlpf")]
+  [ValidateSet("knoise", "evflow", "ynoise", "ts", "mlpf", "pfd")]
   [string]$Algorithm,
   [ValidateSet("coarse", "dense")]
   [string]$SweepProfile = "coarse"
@@ -235,10 +235,30 @@ foreach ($lv in $LEVELS) {
         Run-Roc -Clean $clean -Noisy $noisy -OutCsv $outCsv -Tag ("mlpf_tau{0}" -f $tau) -Method "mlpf" -Radius 3 -TimeUs $tau -Values $thr
       }
     }
+    "pfd" {
+      # =========================== TUNE_HERE: PFD sweep ===========================
+      $thr = if ($IS_DENSE) { New-IntRangeCsv -Start 0 -End 10 -Step 1 } else { "1,2,3,4,5,6,7,8" }
+      $r = 3
+      $tauList = if ($IS_DENSE) { @(8000,12000,16000,24000,32000,48000,64000,96000,128000,192000,256000) } else { @(8000,16000,32000,64000,128000,256000) }
+      $mList = if ($IS_DENSE) { @(1,2,3,4) } else { @(1,2,3) }
+      foreach ($m in $mList) {
+        foreach ($tau in $tauList) {
+          & $PY -m myevs.cli roc `
+            --clean $clean --noisy $noisy `
+            --assume npy --width $WIDTH --height $HEIGHT `
+            --tick-ns $TICK_NS `
+            --engine numba `
+            --method pfd --radius-px $r --time-us $tau --refractory-us $m --pfd-mode a `
+            --param min-neighbors --values $thr `
+            --match-us $MATCH_US --match-bin-radius $MATCH_BIN_RADIUS `
+            --tag ("pfd_r{0}_tau{1}_m{2}" -f $r, $tau, $m) --out-csv $outCsv --append --progress
+        }
+      }
+    }
   }
 
   $plotCsv = $outCsv
-  if ($Algorithm -in @("evflow", "ynoise", "ts")) {
+  if ($Algorithm -in @("evflow", "ynoise", "ts", "pfd")) {
     $topTags = Get-TopTagsByRadius -CsvPath $outCsv -TopNPerRadius 3
     $plotCsv = Join-Path $outDir ("roc_{0}_{1}_top3_per_r.csv" -f $Algorithm, $lv.Name)
     Export-FilteredCsv -InCsv $outCsv -Tags $topTags -OutCsv $plotCsv

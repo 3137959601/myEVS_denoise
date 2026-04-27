@@ -19,7 +19,7 @@ from myevs.timebase import TimeBase
 
 from myevs.denoise.ops.ebfopt_part2.n149_n145_s52_euclid_compactlut_backbone import score_stream_n149
 
-SUPPORTED_ALGS = ("baf", "stcf", "ebf", "n149", "knoise", "evflow", "ynoise", "ts", "mlpf")
+SUPPORTED_ALGS = ("baf", "stcf", "ebf", "n149", "knoise", "evflow", "ynoise", "ts", "mlpf", "pfd")
 
 
 @dataclass(frozen=True)
@@ -190,7 +190,12 @@ def _build_config(alg: str, row: dict[str, str]) -> OpConfig:
     method = "stc" if alg == "stcf" else alg
     radius, time_us = _infer_base_cfg(alg, tag)
     min_neighbors = 2.0
-    refractory = 50
+    refractory = 1 if alg == "pfd" else 50
+
+    if alg == "pfd":
+        m_stage1 = re.search(r"(?:^|_)m(\d+)(?:_|$)", tag)
+        if m_stage1:
+            refractory = int(m_stage1.group(1))
 
     param = str(row.get("param", "")).strip().lower()
     value = _to_float(row.get("value"), 0.0)

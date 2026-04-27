@@ -17,6 +17,9 @@ N175_K_SFRAC = 2.0 / 3.0
 N175_K_MIX = 1.0 / 5.0
 N175_RSTATE_INIT = 0.10
 
+_N175_KERNEL = None
+_N175_TABLE_CACHE: dict[tuple[int, float], tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
+
 
 def _require_numba() -> None:
     if numba is None:
@@ -433,7 +436,45 @@ def _try_build_n175_kernel():
     return _kernel
 
 
-def score_stream_n175(
+def _get_n175_kernel():
+    global _N175_KERNEL
+    if _N175_KERNEL is None:
+        _N175_KERNEL = _try_build_n175_kernel()
+    return _N175_KERNEL
+
+
+def _get_compact_tables_cached(
+    radius_px: int,
+    sigma_space: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    rr = int(radius_px)
+    if rr < 0:
+        rr = 0
+    if rr > 8:
+        rr = 8
+    sig = float(sigma_space)
+    if sig <= 1e-6:
+        sig = 1e-6
+    key = (rr, sig)
+    cached = _N175_TABLE_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    axis_u, diag_u, int_u, int_v, lut_int = _build_compact_kernel_tables(rr, sig)
+    lut_axis = np.zeros((axis_u.shape[0],), dtype=np.float32)
+    lut_diag = np.zeros((diag_u.shape[0],), dtype=np.float32)
+    inv_2sig2 = 1.0 / (2.0 * sig * sig)
+    for k in range(axis_u.shape[0]):
+        u = int(axis_u[k])
+        lut_axis[k] = np.float32(np.exp(-float(u * u) * inv_2sig2))
+        lut_diag[k] = np.float32(np.exp(-float(2 * u * u) * inv_2sig2))
+
+    cached = (axis_u, diag_u, int_u, int_v, lut_axis, lut_diag, lut_int)
+    _N175_TABLE_CACHE[key] = cached
+    return cached
+
+
+def _score_stream_n175_core(
     ev,
     *,
     width: int,
@@ -441,15 +482,11 @@ def score_stream_n175(
     radius_px: int,
     tau_us: int,
     tb: TimeBase,
+    beta_init: float,
+    k_sfrac: float,
+    k_mix: float,
     scores_out: np.ndarray | None = None,
 ) -> np.ndarray:
-    """N175: n171 rationalized with fraction-friendly coefficients.
-
-    Key changes relative to n171:
-    - Replaces empirical decimals with simple rational forms (1/2, 1/3, 1/4).
-    - Keeps the same state layout and computational footprint.
-    """
-
     n = int(ev.t.shape[0])
     if scores_out is None:
         scores_out = np.empty((n,), dtype=np.float32)
@@ -458,22 +495,15 @@ def score_stream_n175(
 
     tau_base_ticks = int(tb.us_to_ticks(int(tau_us)))
     sigma_space = float(N175_SIGMA)
-    beta_init = float(N175_BETA_INIT)
-    k_sfrac = float(N175_K_SFRAC)
-    k_mix = float(N175_K_MIX)
     if sigma_space <= 1e-6:
         sigma_space = 1e-6
 
-    axis_u, diag_u, int_u, int_v, lut_int = _build_compact_kernel_tables(int(radius_px), float(sigma_space))
-    lut_axis = np.zeros((axis_u.shape[0],), dtype=np.float32)
-    lut_diag = np.zeros((diag_u.shape[0],), dtype=np.float32)
-    inv_2sig2 = 1.0 / (2.0 * sigma_space * sigma_space)
-    for k in range(axis_u.shape[0]):
-        u = int(axis_u[k])
-        lut_axis[k] = np.float32(np.exp(-float(u * u) * inv_2sig2))
-        lut_diag[k] = np.float32(np.exp(-float(2 * u * u) * inv_2sig2))
+    axis_u, diag_u, int_u, int_v, lut_axis, lut_diag, lut_int = _get_compact_tables_cached(
+        int(radius_px),
+        float(sigma_space),
+    )
 
-    ker = _try_build_n175_kernel()
+    ker = _get_n175_kernel()
     ker(
         ev.t.astype(np.uint64, copy=False),
         ev.x.astype(np.int32, copy=False),
@@ -496,3 +526,34 @@ def score_stream_n175(
         scores_out,
     )
     return scores_out
+
+
+def score_stream_n175(
+    ev,
+    *,
+    width: int,
+    height: int,
+    radius_px: int,
+    tau_us: int,
+    tb: TimeBase,
+    scores_out: np.ndarray | None = None,
+) -> np.ndarray:
+    """N175: n171 rationalized with fraction-friendly coefficients.
+
+    Key changes relative to n171:
+    - Replaces empirical decimals with simple rational forms (1/2, 1/3, 1/4).
+    - Keeps the same state layout and computational footprint.
+    """
+
+    return _score_stream_n175_core(
+        ev,
+        width=int(width),
+        height=int(height),
+        radius_px=int(radius_px),
+        tau_us=int(tau_us),
+        tb=tb,
+        beta_init=float(N175_BETA_INIT),
+        k_sfrac=float(N175_K_SFRAC),
+        k_mix=float(N175_K_MIX),
+        scores_out=scores_out,
+    )

@@ -37,7 +37,7 @@ $SPLITS = @(
   @{ Name = "heavy"; Noisy = "Pedestrain_06_3.3.npy"; Clean = "Pedestrain_06_3.3_signal_only.npy" }
 )
 
-$ALL_ALGS = @("knoise", "evflow", "ynoise", "ts", "mlpf")
+$ALL_ALGS = @("knoise", "evflow", "ynoise", "ts", "mlpf", "pfd")
 
 function Resolve-Algorithms {
   param(
@@ -422,10 +422,26 @@ foreach ($alg in $SELECTED_ALGS) {
           Run-Roc -Clean $clean -Noisy $noisy -OutCsv $outCsv -Tag ("mlpf_tau{0}" -f $tau) -Method "mlpf" -Radius 3 -TimeUs $tau -SweepValues $thr -ExtraArgs $mlpfArgs
         }
       }
+      "pfd" {
+        # =========================== TUNE_HERE: PFD sweep ===========================
+        # NOTE:
+        # - Keep radius fixed to r=3 (empirical best on current ED24 setting).
+        # - Sweep delta_t(time-us), lambda(min-neighbors), m(refractory-us).
+        # - Use mode A for ED24 baseline; mode B is implemented but not run here.
+        $thr = if ($IS_DENSE) { New-IntRangeCsv -Start 0 -End 10 -Step 1 } else { "1,2,3,4,5,6,7,8" }
+        $r = 3
+        $tauList = if ($IS_DENSE) { @(8000,12000,16000,24000,32000,48000,64000,96000,128000,192000,256000) } else { @(8000, 16000, 32000, 64000, 128000, 256000) }
+        $mList = if ($IS_DENSE) { @(1,2,3,4) } else { @(1,2,3) }
+        foreach ($m in $mList) {
+          foreach ($tau in $tauList) {
+            Run-Roc -Clean $clean -Noisy $noisy -OutCsv $outCsv -Tag ("pfd_r{0}_tau{1}_m{2}" -f $r, $tau, $m) -Method "pfd" -Radius $r -TimeUs $tau -SweepValues $thr -Engine "numba" -ExtraArgs @("--refractory-us", "$m", "--pfd-mode", "a")
+          }
+        }
+      }
     }
 
     $plotCsv = $outCsv
-    if ($alg -in @("evflow", "ynoise", "ts")) {
+    if ($alg -in @("evflow", "ynoise", "ts", "pfd")) {
       $topTags = Get-TopTagsByRadius -CsvPath $outCsv -TopNPerRadius 3
       $plotCsv = Join-Path $outDir ("roc_{0}_{1}_top3_per_r.csv" -f $alg, $sp.Name)
       Export-FilteredCsv -InCsv $outCsv -Tags $topTags -OutCsv $plotCsv
