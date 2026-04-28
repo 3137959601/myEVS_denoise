@@ -23,8 +23,8 @@ ED24 数据集（已存在）：
 
 Driving 数据集（已存在）：
 - `D:\hjx_workspace\scientific_reserach\dataset\DND21\mydriving\driving_noise_light_slomo_shot_withlabel`
+- `D:\hjx_workspace\scientific_reserach\dataset\DND21\mydriving\driving_noise_light_mid_slomo_shot_withlabel`
 - `D:\hjx_workspace\scientific_reserach\dataset\DND21\mydriving\driving_noise_mid_slomo_shot_withlabel`
-- `D:\hjx_workspace\scientific_reserach\dataset\DND21\mydriving\driving_noise_heavy_slomo_shot_withlabel`
 
 脚本目录（已存在）：
 - `D:\hjx_workspace\scientific_reserach\projects\myEVS\scripts\ED24_alg_evalu`
@@ -43,7 +43,7 @@ Driving 数据集（已存在）：
 已约定示例：
 - `data/ED24/myPedestrain_06/BAF/roc_baf_light.csv`
 - `data/ED24/myPedestrain_06/KNOISE/roc_knoise_mid.csv`
-- `data/DND21/mydriving/light/EVFLOW/roc_evflow_light.csv`
+- `data/DND21/mydriving/EVFLOW/roc_evflow_light.csv`
 
 命名要求：
 - 算法目录统一大写（如 `KNOISE`），文件名前缀统一小写（如 `roc_knoise_*.csv`）。
@@ -319,6 +319,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\ED24_alg_evalu\run_slomo_knoi
 - `scripts/driving_alg_evalu/run_driving_ts.ps1`
 - `scripts/driving_alg_evalu/run_driving_mlpf.ps1`
 - `scripts/driving_alg_evalu/run_driving_pfd.ps1`
+- `scripts/driving_alg_evalu/run_driving_n149.ps1`（N149 独立入口，调用 labelscore 网格脚本）
 
 运行示例：
 ```powershell
@@ -363,6 +364,7 @@ Driving 脚本会在每个噪声级目录自动查找：
 
 - `run_driving_alg.ps1`（新增）：Driving 数据集统一入口
 - `run_driving_{knoise|evflow|ynoise|ts|mlpf|pfd}.ps1`（新增）：单算法入口
+- `run_driving_n149.ps1`：Driving 上 N149 独立扫频入口（当前不并入 `run_driving_alg.ps1`）
 
 ### 5.4 noise_analyze
 
@@ -393,7 +395,7 @@ Driving 脚本会在每个噪声级目录自动查找：
 
 1. 先跑 ED24：`BAF/STCF/EBF + KNOISE/EVFLOW/YNOISE/TS/MLPF/PFD`
 2. 再跑 Driving：同样算法集合
-3. 每个算法先看三档噪声（light/mid/heavy）的 AUC 稳定性
+3. 每个算法先看三档噪声（light/light_mid/mid）的 AUC 稳定性
 4. 再做跨数据集总表排序，筛选论文主结果算法
 
 ## 8. 约束与后续补充规则
@@ -483,6 +485,69 @@ Driving 脚本会在每个噪声级目录自动查找：
 - F1 对比（PFD）：`light=0.908376`, `mid=0.794614`, `heavy=0.727360`。  
 在 `mid/heavy` 上稳定高于 `TS/EVFLOW/KNOISE/MLPF`，与 `STCF` 接近或略优。
 - 代价侧：旧版纯 Python 扫频确实很慢；本轮改为 `numba` 后，PFD 三档平均运行时已降到约 `76.418s/档`（coarse 网格）。论文中的“实时”来自 C++/FPGA 实现，本工程当前仍是 Python + numba 版本。
+
+### 10.6 Driving 横向结果汇总（200k, light/light_mid/mid）
+
+数据来源：
+- `data/DND21/mydriving/horizontal_summary_all.csv`
+- `data/DND21/mydriving/bestpoint_mesr_aocc_summary.csv`
+- `data/DND21/mydriving/{ALG}/runtime_*.csv` 与 `data/DND21/mydriving/N149/runtime_n149.csv`
+
+说明：
+1. 该汇总已覆盖 `BAF/STCF/EBF/N149/KNOISE/EVFLOW/YNOISE/TS/MLPF/PFD` 全部算法。
+2. 按你的要求，`EVFLOW` 的 `MESR/AOCC` 暂停计算，先留空。
+3. `Runtime(s)` 为当前口径下各算法各档最新一次记录。
+4. Driving 结果目录已统一为“算法优先”布局：`data/DND21/mydriving/{ALG}/roc_{alg}_{level}.csv`，与 ED24 的组织方式一致。
+
+#### 10.6.1 light
+
+| Algorithm | Best AUC | Best AUC Tag | F1@Best-AUC | Thr@Best-AUC | MESR@Best-AUC | AOCC@Best-AUC | Best F1 | Best F1 Tag | Thr@Best-F1 | AUC@Best-F1 | MESR@Best-F1 | AOCC@Best-F1 | Runtime(s) |
+|---|---:|---|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|
+| BAF | 0.799350 | baf_r1_tau4000 | 0.905169 | 1.000000 | 0.788445 | 2.379989 | 0.977395 | baf_r2_tau32000 | 1.000000 | 0.593953 | 0.717649 | 2.321786 | 22.235 |
+| STCF | 0.935075 | stcf_r1 | 0.977808 | 128000.000000 | 0.733109 | 2.429605 | 0.987283 | stcf_r4 | 16000.000000 | 0.902610 | 0.726550 | 2.392844 | 61.093 |
+| EBF | 0.937124 | ebf_r2_tau16000 | 0.987250 | 0.000000 | 0.730291 | 2.430151 | 0.987540 | ebf_r3_tau16000 | 0.500000 | 0.916800 | 0.727634 | 2.407034 | 14.627 |
+| N149 | 0.932978 | n149_r2_tau32000_light | 0.981619 | 0.259854 | 0.725054 | 2.402036 | 0.982559 | n149_r3_tau64000_light | 0.476634 | 0.926168 | 0.718161 | 2.335562 | 26.308 |
+| KNOISE | 0.597576 | knoise_tau4000 | 0.979814 | 0.000000 | 0.711667 | 2.234047 | 0.979814 | knoise_tau1000 | 0.000000 | 0.596042 | 0.711667 | 2.234047 | 85.306 |
+| EVFLOW | 0.822085 | evflow_r2_tau8000 | 0.920775 | 64.000000 |  |  | 0.970408 | evflow_r3_tau32000 | 64.000000 | 0.752090 |  |  | 684.152 |
+| YNOISE | 0.936610 | ynoise_r2_tau8000 | 0.981020 | 1.000000 | 0.740235 | 2.461512 | 0.983444 | ynoise_r2_tau16000 | 1.000000 | 0.927710 | 0.730039 | 2.428665 | 300.664 |
+| TS | 0.840665 | ts_r2_decay32000 | 0.981704 | 0.200000 | 0.761003 | 2.597591 | 0.981704 | ts_r2_decay32000 | 0.200000 | 0.840665 | 0.761003 | 2.597591 | 8.854 |
+| MLPF | 0.472022 | mlpf_tau32000 | 0.972319 | 0.800000 | 0.711261 | 2.244642 | 0.972323 | mlpf_tau64000 | 0.800000 | 0.430472 | 0.705434 | 2.236060 | 446.578 |
+| PFD | 0.901287 | pfd_r3_tau8000_m2 | 0.975540 | 1.000000 | 0.742263 | 2.483932 | 0.978808 | pfd_r3_tau8000_m1 | 1.000000 | 0.894581 | 0.737233 | 2.457937 | 31.352 |
+
+#### 10.6.2 light_mid
+
+| Algorithm | Best AUC | Best AUC Tag | F1@Best-AUC | Thr@Best-AUC | MESR@Best-AUC | AOCC@Best-AUC | Best F1 | Best F1 Tag | Thr@Best-F1 | AUC@Best-F1 | MESR@Best-F1 | AOCC@Best-F1 | Runtime(s) |
+|---|---:|---|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|
+| BAF | 0.881811 | baf_r1 | 0.948786 | 16000.000000 | 0.723033 | 2.306037 | 0.948786 | baf_r1 | 16000.000000 | 0.881811 | 0.723033 | 2.306037 | 22.991 |
+| STCF | 0.936965 | stcf_r1 | 0.961349 | 64000.000000 | 0.730580 | 2.376526 | 0.970314 | stcf_r2 | 16000.000000 | 0.933485 | 0.732522 | 2.415924 | 63.392 |
+| EBF | 0.937867 | ebf_r2_tau16000 | 0.970612 | 1.000000 | 0.742812 | 2.461226 | 0.971160 | ebf_r2_tau32000 | 1.500000 | 0.922190 | 0.731829 | 2.436520 | 14.687 |
+| N149 | 0.936847 | n149_r2_tau32000_light_mid | 0.958057 | 0.747070 | 0.720106 | 2.356677 | 0.958849 | n149_r3_tau32000_light_mid | 0.870674 | 0.936600 | 0.710368 | 2.272940 | 25.970 |
+| KNOISE | 0.591022 | knoise_tau2000 | 0.939629 | 0.000000 | 0.681278 | 1.981033 | 0.939629 | knoise_tau1000 | 0.000000 | 0.590283 | 0.681278 | 1.981033 | 86.387 |
+| EVFLOW | 0.828349 | evflow_r2_tau8000 | 0.911603 | 64.000000 |  |  | 0.941888 | evflow_r2_tau32000 | 64.000000 | 0.763634 |  |  | 677.403 |
+| YNOISE | 0.935314 | ynoise_r2_tau8000 | 0.957535 | 1.000000 | 0.725979 | 2.306716 | 0.962252 | ynoise_r2_tau16000 | 2.000000 | 0.927591 | 0.732927 | 2.413554 | 296.672 |
+| TS | 0.802150 | ts_r2_decay32000 | 0.943836 | 0.300000 | 0.784064 | 2.581381 | 0.943836 | ts_r2_decay32000 | 0.300000 | 0.802150 | 0.784064 | 2.581381 | 8.741 |
+| MLPF | 0.439639 | mlpf_tau32000 | 0.916399 | 0.100000 | 0.681240 | 1.981077 | 0.916399 | mlpf_tau32000 | 0.100000 | 0.439639 | 0.681240 | 1.981077 | 448.517 |
+| PFD | 0.900137 | pfd_r3_tau8000_m2 | 0.958203 | 1.000000 | 0.731202 | 2.368465 | 0.958203 | pfd_r3_tau8000_m2 | 1.000000 | 0.900137 | 0.731202 | 2.368465 | 31.951 |
+
+#### 10.6.3 mid
+
+| Algorithm | Best AUC | Best AUC Tag | F1@Best-AUC | Thr@Best-AUC | MESR@Best-AUC | AOCC@Best-AUC | Best F1 | Best F1 Tag | Thr@Best-F1 | AUC@Best-F1 | MESR@Best-F1 | AOCC@Best-F1 | Runtime(s) |
+|---|---:|---|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|
+| BAF | 0.868373 | baf_r1 | 0.916932 | 8000.000000 | 0.735027 | 2.221840 | 0.916932 | baf_r1 | 8000.000000 | 0.868373 | 0.735027 | 2.221840 | 23.325 |
+| STCF | 0.935924 | stcf_r1 | 0.946620 | 32000.000000 | 0.742287 | 2.392254 | 0.954822 | stcf_r2 | 8000.000000 | 0.930659 | 0.751749 | 2.389156 | 65.307 |
+| EBF | 0.937166 | ebf_r2_tau16000 | 0.956357 | 1.500000 | 0.749396 | 2.433484 | 0.956357 | ebf_r2_tau16000 | 1.500000 | 0.937166 | 0.749396 | 2.433484 | 14.778 |
+| N149 | 0.938152 | n149_r2_tau32000_mid | 0.937040 | 1.071131 | 0.718285 | 2.311529 | 0.937725 | n149_r3_tau32000_mid | 1.153651 | 0.938016 | 0.700190 | 2.158709 | 25.899 |
+| KNOISE | 0.584814 | knoise_tau2000 | 0.899398 | 0.000000 | 0.657992 | 1.796615 | 0.899398 | knoise_tau1000 | 0.000000 | 0.584477 | 0.657992 | 1.796615 | 87.263 |
+| EVFLOW | 0.826195 | evflow_r2_tau8000 | 0.898333 | 64.000000 |  |  | 0.915064 | evflow_r2_tau16000 | 64.000000 | 0.793410 |  |  | 682.711 |
+| YNOISE | 0.933513 | ynoise_r2_tau8000 | 0.940422 | 2.000000 | 0.751525 | 2.384611 | 0.942359 | ynoise_r2_tau16000 | 3.000000 | 0.926730 | 0.743120 | 2.426991 | 293.449 |
+| TS | 0.777210 | ts_r2_decay32000 | 0.904080 | 0.500000 | 0.851542 | 2.388471 | 0.904080 | ts_r2_decay32000 | 0.500000 | 0.777210 | 0.851542 | 2.388471 | 8.731 |
+| MLPF | 0.498857 | mlpf_tau256000 | 0.853742 | 0.100000 | 0.666617 | 1.777021 | 0.861026 | mlpf_tau512000 | 0.200000 | 0.415801 | 0.673816 | 1.883022 | 450.010 |
+| PFD | 0.897118 | pfd_r3_tau8000_m3 | 0.936814 | 1.000000 | 0.741823 | 2.358040 | 0.936814 | pfd_r3_tau8000_m3 | 1.000000 | 0.897118 | 0.741823 | 2.358040 | 33.339 |
+
+结论更新（N149 vs EBF，Driving 200k）：
+1. 旧版“N149 低于 EBF”的主要原因是 N149 当时只扫了 `r=3/4/5`，结构参数覆盖不完整。
+2. 本轮加入 `r=2` 并做 `sigma` 扫描后，N149 的 `best-AUC` 变为 `0.932978/0.936847/0.938152`（light/light_mid/mid），已与 EBF 接近，且在 `mid` 上略高于当前 EBF 汇总值。
+3. 对 driving 这类数据，优先补全结构参数覆盖（`r`、`sigma`），再细化阈值，收益更稳定。
 
 ## 11. N147 补充结果（EBF_Part2 / compact400k）
 
@@ -631,6 +696,12 @@ powershell -ExecutionPolicy Bypass -File ./scripts/driving_alg_evalu/run_driving
 # 其他算法 dense 示例
 powershell -ExecutionPolicy Bypass -File ./scripts/driving_alg_evalu/run_driving_alg.ps1 -Algorithm ts -SweepProfile dense
 powershell -ExecutionPolicy Bypass -File ./scripts/driving_alg_evalu/run_driving_alg.ps1 -Algorithm pfd -SweepProfile dense
+
+# 真实 MLPF（按 level 自动套模型）
+powershell -ExecutionPolicy Bypass -File ./scripts/driving_alg_evalu/run_driving_alg.ps1 -Algorithm mlpf -SweepProfile coarse -MlpfModelPattern "data/DND21/mydriving/MLPF/mlpf_torch_{level}.pt"
+
+# N149（独立脚本，200k）
+powershell -ExecutionPolicy Bypass -File ./scripts/driving_alg_evalu/run_driving_n149.ps1
 ```
 
 ### 15.2 ED24 传统算法入口
@@ -683,8 +754,8 @@ D:/software/Anaconda_envs/envs/myEVS/python.exe -m myevs.cli roc --clean <clean.
 # ED24：真实 MLPF（按 level 自动套模型）
 D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/eval_bestpoint_mesr_aocc.py --dataset ed24 --algorithms mlpf --mlpf-model-pattern "data/ED24/myPedestrain_06/MLPF/mlpf_torch_{level}.pt"
 
-# Driving：只算 mid/heavy，且只算 best-F1
-D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/eval_bestpoint_mesr_aocc.py --dataset driving --levels mid,heavy --points best-f1
+# Driving：只算 light/light_mid/mid，且只算 best-F1
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/eval_bestpoint_mesr_aocc.py --dataset driving --levels light,light_mid,mid --points best-f1
 
 # 指标可选：只算 MESR 或只算 AOCC
 D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/eval_bestpoint_mesr_aocc.py --dataset ed24 --metrics mesr
@@ -703,14 +774,59 @@ D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/eval_bestpoint_mesr_aocc
 ### 15.5 MLPF 训练与真实推理
 
 ```powershell
-# 1) 训练（按 light / mid / heavy 分别训练）
-D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/train_mlpf_torch.py --clean "D:/hjx_workspace/scientific_reserach/dataset/ED24/myPedestrain_06/Pedestrain_06_1.8_signal_only.npy" --noisy "D:/hjx_workspace/scientific_reserach/dataset/ED24/myPedestrain_06/Pedestrain_06_1.8.npy" --out-model "data/ED24/myPedestrain_06/MLPF/mlpf_torch_light.pt" --out-meta "data/ED24/myPedestrain_06/MLPF/mlpf_torch_light.json" --width 346 --height 260 --patch 7 --epochs 5 --batch-size 4096 --max-events 120000
-D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/train_mlpf_torch.py --clean "D:/hjx_workspace/scientific_reserach/dataset/ED24/myPedestrain_06/Pedestrain_06_2.5_signal_only.npy" --noisy "D:/hjx_workspace/scientific_reserach/dataset/ED24/myPedestrain_06/Pedestrain_06_2.5.npy" --out-model "data/ED24/myPedestrain_06/MLPF/mlpf_torch_mid.pt" --out-meta "data/ED24/myPedestrain_06/MLPF/mlpf_torch_mid.json" --width 346 --height 260 --patch 7 --epochs 5 --batch-size 4096 --max-events 120000
-D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/train_mlpf_torch.py --clean "D:/hjx_workspace/scientific_reserach/dataset/ED24/myPedestrain_06/Pedestrain_06_3.3_signal_only.npy" --noisy "D:/hjx_workspace/scientific_reserach/dataset/ED24/myPedestrain_06/Pedestrain_06_3.3.npy" --out-model "data/ED24/myPedestrain_06/MLPF/mlpf_torch_heavy.pt" --out-meta "data/ED24/myPedestrain_06/MLPF/mlpf_torch_heavy.json" --width 346 --height 260 --patch 7 --epochs 5 --batch-size 4096 --max-events 120000
+# 1) 训练 ED24（按 light / mid / heavy）
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/train_mlpf_torch.py --clean "D:/hjx_workspace/scientific_reserach/dataset/ED24/myPedestrain_06/Pedestrain_06_1.8_signal_only.npy" --noisy "D:/hjx_workspace/scientific_reserach/dataset/ED24/myPedestrain_06/Pedestrain_06_1.8.npy" --width 346 --height 260 --tick-ns 1000 --duration-us 128000 --patch 7 --epochs 8 --batch-size 512 --max-events 200000 --out-ts "data/ED24/myPedestrain_06/MLPF/mlpf_torch_light.pt" --out-meta "data/ED24/myPedestrain_06/MLPF/mlpf_torch_light.json"
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/train_mlpf_torch.py --clean "D:/hjx_workspace/scientific_reserach/dataset/ED24/myPedestrain_06/Pedestrain_06_2.5_signal_only.npy" --noisy "D:/hjx_workspace/scientific_reserach/dataset/ED24/myPedestrain_06/Pedestrain_06_2.5.npy" --width 346 --height 260 --tick-ns 1000 --duration-us 128000 --patch 7 --epochs 8 --batch-size 512 --max-events 200000 --out-ts "data/ED24/myPedestrain_06/MLPF/mlpf_torch_mid.pt" --out-meta "data/ED24/myPedestrain_06/MLPF/mlpf_torch_mid.json"
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/train_mlpf_torch.py --clean "D:/hjx_workspace/scientific_reserach/dataset/ED24/myPedestrain_06/Pedestrain_06_3.3_signal_only.npy" --noisy "D:/hjx_workspace/scientific_reserach/dataset/ED24/myPedestrain_06/Pedestrain_06_3.3.npy" --width 346 --height 260 --tick-ns 1000 --duration-us 128000 --patch 7 --epochs 8 --batch-size 512 --max-events 200000 --out-ts "data/ED24/myPedestrain_06/MLPF/mlpf_torch_heavy.pt" --out-meta "data/ED24/myPedestrain_06/MLPF/mlpf_torch_heavy.json"
 
 # 2) 用真实模型跑 ED24 MLPF ROC
 powershell -ExecutionPolicy Bypass -File ./scripts/ED24_alg_evalu/run_slomo_alg.ps1 -Algorithm mlpf -SweepProfile coarse -MlpfModelPattern "data/ED24/myPedestrain_06/MLPF/mlpf_torch_{level}.pt"
+
+# 3) 训练 Driving（按 light / light_mid / mid）
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/train_mlpf_torch.py --clean "D:/hjx_workspace/scientific_reserach/dataset/DND21/mydriving/driving_noise_light_slomo_shot_withlabel/driving_noise_light_signal_only.npy" --noisy "D:/hjx_workspace/scientific_reserach/dataset/DND21/mydriving/driving_noise_light_slomo_shot_withlabel/driving_noise_light_labeled.npy" --width 346 --height 260 --tick-ns 1000 --duration-us 128000 --patch 7 --epochs 8 --batch-size 512 --max-events 200000 --out-ts "data/DND21/mydriving/MLPF/mlpf_torch_light.pt" --out-meta "data/DND21/mydriving/MLPF/mlpf_torch_light.json"
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/train_mlpf_torch.py --clean "D:/hjx_workspace/scientific_reserach/dataset/DND21/mydriving/driving_noise_light_mid_slomo_shot_withlabel/driving_noise_light_mid_signal_only.npy" --noisy "D:/hjx_workspace/scientific_reserach/dataset/DND21/mydriving/driving_noise_light_mid_slomo_shot_withlabel/driving_noise_light_mid_labeled.npy" --width 346 --height 260 --tick-ns 1000 --duration-us 128000 --patch 7 --epochs 8 --batch-size 512 --max-events 200000 --out-ts "data/DND21/mydriving/MLPF/mlpf_torch_light_mid.pt" --out-meta "data/DND21/mydriving/MLPF/mlpf_torch_light_mid.json"
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/train_mlpf_torch.py --clean "D:/hjx_workspace/scientific_reserach/dataset/DND21/mydriving/driving_noise_mid_slomo_shot_withlabel/driving_noise_mid_signal_only.npy" --noisy "D:/hjx_workspace/scientific_reserach/dataset/DND21/mydriving/driving_noise_mid_slomo_shot_withlabel/driving_noise_mid_labeled.npy" --width 346 --height 260 --tick-ns 1000 --duration-us 128000 --patch 7 --epochs 8 --batch-size 512 --max-events 200000 --out-ts "data/DND21/mydriving/MLPF/mlpf_torch_mid.pt" --out-meta "data/DND21/mydriving/MLPF/mlpf_torch_mid.json"
+
+# 4) 用真实模型跑 Driving MLPF ROC
+powershell -ExecutionPolicy Bypass -File ./scripts/driving_alg_evalu/run_driving_alg.ps1 -Algorithm mlpf -SweepProfile coarse -MlpfModelPattern "data/DND21/mydriving/MLPF/mlpf_torch_{level}.pt"
 ```
+
+### 15.5.1 Driving MLPF（真实模型）重跑结果（2026-04-28）
+
+数据来源：
+- `data/DND21/mydriving/MLPF/roc_mlpf_{level}.csv`
+- `data/DND21/mydriving/MLPF/runtime_mlpf.csv`（按 level 取最新一条）
+- `data/DND21/mydriving/bestpoint_mesr_aocc_summary.csv`（best-AUC / best-F1）
+
+| Level | Best AUC | Best AUC Tag | Best AUC Threshold | MESR@Best-AUC | AOCC@Best-AUC | Best F1 | Best F1 Tag | Best F1 Threshold | MESR@Best-F1 | AOCC@Best-F1 | Runtime(s) |
+|---|---:|---|---:|---:|---:|---:|---|---:|---:|---:|---:|
+| light | 0.472022 | mlpf_tau32000 | 0.8 | 0.711261 | 2.244642 | 0.972323 | mlpf_tau64000 | 0.8 | 0.705434 | 2.236060 | 446.578 |
+| light_mid | 0.439639 | mlpf_tau32000 | 0.1 | 0.681240 | 1.981077 | 0.916399 | mlpf_tau32000 | 0.1 | 0.681240 | 1.981077 | 448.517 |
+| mid | 0.498857 | mlpf_tau256000 | 0.1 | 0.666617 | 1.777021 | 0.861026 | mlpf_tau512000 | 0.2 | 0.673816 | 1.883022 | 450.010 |
+
+说明：
+1. 该表是“真实模型推理模式”结果（已传 `--mlpf-model`），不是 proxy 回退模式。
+2. 当前 AUC 偏低的直接现象是：大量阈值点靠近“全保留”区（FPR/TPR 同时较高），说明该训练流程在 driving 上判别力不足，后续需继续优化训练策略（样本均衡/损失重加权/更强特征）。
+
+### 15.5.2 Driving N149（200k）补跑结果（2026-04-28）
+
+数据来源：
+- `data/DND21/mydriving/N149_sigma_scan/summary_sigma_scan.csv`
+- `data/DND21/mydriving/N149_sigma_scan/selected_config.csv`
+- `data/DND21/mydriving/N149_selected/roc_n149_{light,light_mid,mid}.csv`
+- `data/DND21/mydriving/N149/runtime_n149.csv`（由 `N149_selected` 同步）
+- `data/DND21/mydriving/bestpoint_mesr_aocc_summary.csv`（已补 n149 的 best-AUC / best-F1）
+
+| Level | Best AUC | Best AUC Tag | Threshold@Best-AUC | F1@Best-AUC | MESR@Best-AUC | AOCC@Best-AUC | Best F1 | Best F1 Tag | Threshold@Best-F1 | AUC@Best-F1 | MESR@Best-F1 | AOCC@Best-F1 | Runtime(s) |
+|---|---:|---|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|
+| light | 0.932978 | n149_r2_tau32000_light | 0.259854 | 0.981619 | 0.725054 | 2.402036 | 0.982559 | n149_r3_tau64000_light | 0.476634 | 0.926168 | 0.718161 | 2.335562 | 26.308 |
+| light_mid | 0.936847 | n149_r2_tau32000_light_mid | 0.747070 | 0.958057 | 0.720106 | 2.356677 | 0.958849 | n149_r3_tau32000_light_mid | 0.870674 | 0.936600 | 0.710368 | 2.272940 | 25.970 |
+| mid | 0.938152 | n149_r2_tau32000_mid | 1.071131 | 0.937040 | 0.718285 | 2.311529 | 0.937725 | n149_r3_tau32000_mid | 1.153651 | 0.938016 | 0.700190 | 2.158709 | 25.899 |
+
+说明：
+1. N149 在 driving 三档下 AUC 更新为 `0.933~0.938`（本轮 sigma 扫描后选优，`sigma=1.5`）。
+2. 与旧版仅 `r=3/4/5` 的结论相比，本轮加入 `r=2` 后，三档 AUC 均提升，说明之前主要不是阈值没扫够，而是半径覆盖不足。
+3. `MESR/AOCC` 已按统一规则补齐：`best-AUC` 与 `best-F1` 两个工作点都已记录。
 
 ### 15.6 N147（EBF_Part2）示例
 

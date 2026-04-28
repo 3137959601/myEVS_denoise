@@ -72,13 +72,14 @@ def _parse_algorithms(raw: str) -> list[str]:
 
 def _parse_levels(raw: str) -> list[str]:
     vals = [s.strip().lower() for s in str(raw).split(",") if s.strip()]
-    valid = ("light", "mid", "heavy")
+    valid = ("light", "light_mid", "mid", "heavy")
     if not vals or "all" in vals:
-        return list(valid)
+        # Driving current default set uses light/light_mid/mid.
+        return ["light", "light_mid", "mid"]
     out: list[str] = []
     for lv in vals:
         if lv not in valid:
-            raise ValueError(f"Unknown level: {lv}. valid=light,mid,heavy")
+            raise ValueError(f"Unknown level: {lv}. valid=light,light_mid,mid,heavy")
         if lv not in out:
             out.append(lv)
     return out
@@ -126,7 +127,15 @@ def _roc_csv_path(dataset: str, level: str, alg: str) -> str:
         if alg == "n149":
             return os.path.join("data", "ED24", "myPedestrain_06", "N149", f"roc_n149_{level}.csv")
         return os.path.join("data", "ED24", "myPedestrain_06", alg.upper(), f"roc_{alg}_{level}.csv")
-    return os.path.join("data", "DND21", "mydriving", level, alg.upper(), f"roc_{alg}_{level}.csv")
+    # Driving now follows ED24-like algorithm-first layout:
+    # data/DND21/mydriving/{ALG}/roc_{alg}_{level}.csv
+    if alg == "n149":
+        p_new = os.path.join("data", "DND21", "mydriving", "N149", f"roc_n149_{level}.csv")
+        p_old = os.path.join("data", "DND21", "mydriving", level, "N149", f"roc_n149_{level}.csv")
+        return p_new if os.path.exists(p_new) else p_old
+    p_new = os.path.join("data", "DND21", "mydriving", alg.upper(), f"roc_{alg}_{level}.csv")
+    p_old = os.path.join("data", "DND21", "mydriving", level, alg.upper(), f"roc_{alg}_{level}.csv")
+    return p_new if os.path.exists(p_new) else p_old
 
 
 def _load_rows(path: str) -> list[dict[str, str]]:
@@ -221,7 +230,7 @@ def _build_config(alg: str, row: dict[str, str]) -> OpConfig:
 def _default_mlpf_model_path(dataset: str, level: str) -> str:
     if dataset == "ed24":
         return os.path.join("data", "ED24", "myPedestrain_06", "MLPF", f"mlpf_torch_{level}.pt")
-    return os.path.join("data", "DND21", "mydriving", level, "MLPF", f"mlpf_torch_{level}.pt")
+    return os.path.join("data", "DND21", "mydriving", "MLPF", f"mlpf_torch_{level}.pt")
 
 
 def _collect_arrays(batches: Iterable[EventBatch]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -295,6 +304,10 @@ def _denoise_and_metrics(
     )
     batches = unwrap_tick_batches(r.batches, bits=None)
     batches = filter_visibility_batches(batches, show_on=True, show_off=True)
+    engine = "python"
+    if str(cfg.method).lower() in ("evflow", "ts", "pfd", "stc"):
+        engine = "numba"
+
     den = denoise_stream(
         r.meta,
         batches,
@@ -310,7 +323,7 @@ def _denoise_and_metrics(
             show_off=True,
         ),
         timebase=tb,
-        engine="python",
+        engine=engine,
     )
     x, y, t = _collect_arrays(den)
     n = int(x.shape[0])
@@ -382,7 +395,7 @@ def main() -> int:
     )
     ap.add_argument("--dataset", choices=["ed24", "driving"], required=True)
     ap.add_argument("--algorithms", default="all", help="comma list, e.g. baf,stcf,ebf or all")
-    ap.add_argument("--levels", default="all", help="comma list: light,mid,heavy or all")
+    ap.add_argument("--levels", default="all", help="comma list: light,light_mid,mid,heavy or all")
     ap.add_argument("--metrics", default="mesr,aocc", help="comma list: mesr,aocc,all,none")
     ap.add_argument("--points", default="best-auc,best-f1", help="comma list: best-auc,best-f1")
     ap.add_argument("--tick-ns", type=float, default=1000.0)
@@ -420,9 +433,6 @@ def main() -> int:
 
     for alg in algs:
         for lv in levels:
-            if alg == "n149" and args.dataset != "ed24":
-                print(f"[skip] n149 currently supports dataset=ed24 only (got {args.dataset})")
-                continue
             roc_csv = _roc_csv_path(args.dataset, lv, alg)
             if not os.path.exists(roc_csv):
                 print(f"[skip] missing roc csv: {roc_csv}")

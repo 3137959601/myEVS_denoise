@@ -208,6 +208,7 @@ def main() -> int:
     ap.add_argument("--tau-us-list", default="1000,2000,4000")
     ap.add_argument("--out-dir", default="data/ED24/myPedestrain_06/N149")
     ap.add_argument("--light", default=r"D:\hjx_workspace\scientific_reserach\dataset\ED24\myPedestrain_06\Pedestrain_06_1.8.npy")
+    ap.add_argument("--light-mid", dest="light_mid", default="", help="optional light_mid labeled npy")
     ap.add_argument("--mid", default=r"D:\hjx_workspace\scientific_reserach\dataset\ED24\myPedestrain_06\Pedestrain_06_2.5.npy")
     ap.add_argument("--heavy", default=r"D:\hjx_workspace\scientific_reserach\dataset\ED24\myPedestrain_06\Pedestrain_06_3.3.npy")
     args = ap.parse_args()
@@ -217,7 +218,15 @@ def main() -> int:
     radius_list = _parse_int_list(args.radius_list)
     tau_list = _parse_int_list(args.tau_us_list)
 
-    env_inputs = {"light": args.light, "mid": args.mid, "heavy": args.heavy}
+    env_inputs: dict[str, str] = {}
+    if str(args.light).strip():
+        env_inputs["light"] = str(args.light)
+    if str(getattr(args, "light_mid", "")).strip():
+        env_inputs["light_mid"] = str(args.light_mid)
+    if str(args.mid).strip():
+        env_inputs["mid"] = str(args.mid)
+    if str(args.heavy).strip():
+        env_inputs["heavy"] = str(args.heavy)
     runtime_rows: list[dict[str, float | str]] = []
 
     header = [
