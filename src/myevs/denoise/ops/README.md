@@ -303,7 +303,7 @@ $$
 
 运行示例：
 ```powershell
-cd D:\hjx_workspace\scientific_reserach\projects\myEVS
+cd D:\hjx_workspace\scientific_re                                           serach\projects\myEVS
 powershell -ExecutionPolicy Bypass -File .\scripts\ED24_alg_evalu\run_slomo_knoise.ps1
 ```
 
@@ -311,6 +311,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\ED24_alg_evalu\run_slomo_knoi
 
 总入口：
 - `scripts/driving_alg_evalu/run_driving_alg.ps1`
+- `scripts/driving_alg_evalu/run_driving_alg_paper.ps1`（论文口径数据入口）
 
 单算法入口：
 - `scripts/driving_alg_evalu/run_driving_knoise.ps1`
@@ -330,6 +331,292 @@ powershell -ExecutionPolicy Bypass -File .\scripts\driving_alg_evalu\run_driving
 Driving 脚本会在每个噪声级目录自动查找：
 - `*signal_only*.npy` 或 `*clean*.npy` 作为 clean
 - 其余 `.npy` 作为 noisy
+
+#### 4.2.1 Driving 论文口径数据生成（1/3/5 Hz）
+
+生成脚本：
+- `scripts/driving_alg_evalu/generate_driving_paper_noise.py`
+
+输入（paper clean）：
+- `D:\hjx_workspace\scientific_reserach\dataset\DND21\mydriving_paper\v2e-dvs-events.txt`
+
+输出目录：
+- `D:\hjx_workspace\scientific_reserach\dataset\DND21\mydriving_paper\driving_noise_light_paper_withlabel`
+- `D:\hjx_workspace\scientific_reserach\dataset\DND21\mydriving_paper\driving_noise_light_mid_paper_withlabel`
+- `D:\hjx_workspace\scientific_reserach\dataset\DND21\mydriving_paper\driving_noise_mid_paper_withlabel`
+
+生成命令：
+```powershell
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/driving_alg_evalu/generate_driving_paper_noise.py `
+  --clean-txt "D:/hjx_workspace/scientific_reserach/dataset/DND21/mydriving_paper/v2e-dvs-events.txt" `
+  --out-root "D:/hjx_workspace/scientific_reserach/dataset/DND21/mydriving_paper" `
+  --width 346 --height 260 --sigma-decades 0.5 --seed 12345
+```
+
+直接跑论文口径 Driving（默认仍输出到 `data/DND21/mydriving/{ALG}`）：
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\driving_alg_evalu\run_driving_alg_paper.ps1 -Algorithm ebf -MaxEvents 200000
+powershell -ExecutionPolicy Bypass -File .\scripts\driving_alg_evalu\run_driving_alg_paper.ps1 -Algorithm all -MaxEvents 200000
+```
+
+口径说明（重要）：
+1. 当前生成方式不是“直接调用 JAER 可执行流程”，而是“参考 JAER `NoiseTesterFilter` 思路在 Python 中实现”：
+   - clean 基线来自 `mydriving_paper/v2e-dvs-events.txt`
+   - 噪声按像素独立 Poisson 过程生成
+   - 像素噪声率引入 log-normal 空间不均匀性（FPN）
+2. `sigma-decades=0.5` 的含义：
+   - 先在 \(\log_{10}\) 域采样像素噪声率扰动，标准差为 `0.5`
+   - 直观上表示像素噪声率存在约“半个 decade 量级”的离散
+3. `FPN`（Fixed Pattern Noise）含义：
+   - 传感器不同像素的固有噪声率不同，且这种差异在时间上相对固定
+   - 代码中体现为每个像素固定一个噪声率 \(r_{x,y}\)，再在时域按 Poisson 采样
+4. 参数选择依据：
+   - `1/3/5 Hz`：对齐 EBF/DND21 常用 driving 噪声档位
+   - `sigma-decades=0.5`：对齐 JAER `NoiseTesterFilter` 与 DND21 文献中常见 FPN 设定
+5. 本版噪声类型：
+   - 当前仅添加 **shot noise**
+   - 未添加 leak noise、leak jitter、记录噪声回放等更完整 JAER 分支
+6. 与“严格 JAER 一致”的边界：
+   - 本版属于“统计口径对齐”的复现，不是二进制级别同实现
+   - 若要完全一致，需走 JAER 原链路导出（含其内部事件调度与可选 leak/noise-recording 分支）
+
+JAER 原链路导出数据转换（2026-04-29 补充）：
+
+生成脚本：
+- `scripts/driving_alg_evalu/convert_jaer_driving_to_npy.py`
+
+输入：
+- clean: `D:\hjx_workspace\scientific_reserach\dataset\DND21\mydriving_paper\driving.aedat`
+- noisy: `D:\hjx_workspace\scientific_reserach\dataset\DND21\mydriving_jaer\driving_noise_{light,light_mid,mid}\driving_jaer_shot_{1,3,5}hz.aedat`
+
+转换命令：
+```powershell
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/driving_alg_evalu/convert_jaer_driving_to_npy.py `
+  --clean-aedat "D:/hjx_workspace/scientific_reserach/dataset/DND21/mydriving_paper/driving.aedat" `
+  --jaer-root "D:/hjx_workspace/scientific_reserach/dataset/DND21/mydriving_jaer" `
+  --out-root "D:/hjx_workspace/scientific_reserach/dataset/DND21/mydriving_jaer" `
+  --width 346 --height 260 --tick-ns 12.5 --overwrite
+```
+
+转换质量检查：
+
+| Level | Target Hz/pixel | Noisy events | Matched signal | Estimated noise | Estimated Hz/pixel |
+|---|---:|---:|---:|---:|---:|
+| light | 1 | 4,285,026 | 3,748,579 | 536,447 | 0.996 |
+| light_mid | 3 | 5,357,184 | 3,748,579 | 1,608,605 | 2.988 |
+| mid | 5 | 6,431,569 | 3,748,578 | 2,682,991 | 4.983 |
+
+说明：
+1. `matched signal` 通过 `(t,x,y,p)` 精确匹配 clean AEDAT 恢复，约覆盖 clean 的 `99.81%`。
+2. `Estimated Hz/pixel` 与目标 `1/3/5Hz` 基本一致，说明 JAER 导出的加噪强度是正确的。
+3. 少量 unmatched clean 事件来自 JAER filtered logging 起止边界或重构细节，对整体 AUC 影响很小。
+
+ED24 外部 Driving 加噪数据转换（2026-04-29 补充）：
+
+源目录：
+- `D:\hjx_workspace\scientific_reserach\dataset\DND21\mydriving_ED24`
+
+每个噪声档位目录包含的文件含义：
+
+| 文件 | 含义 | 是否用于本次 EBF |
+|---|---|---|
+| `1hz.txt` ... `7hz.txt` | v2e 从黑色视频生成的纯噪声事件，时间戳为秒，无 label | 否，仅用于理解噪声来源 |
+| `mix_result.txt` | 另一份混合结果，带 epoch-like 微秒时间戳，`label=0` 数量恒定约 53 万；不像当前 DND21 driving 主序列 | 否 |
+| `driving_mix_result.txt` | Driving 主序列混合结果，`label=0` 数量恒定约 273 万，`label=1` 随噪声档位增加 | 是 |
+| `v2e-args.txt` | v2e 生成参数记录 | 仅作为元数据参考 |
+| `*.avi` | 可视化预览文件，部分档位存在 | 否 |
+
+标签口径：
+- ED24 外部文件：`label=0` 表示 signal，`label=1` 表示 noise。
+- myEVS 统一口径：`label=1` 表示 signal，`label=0` 表示 noise。
+- 因此转换时必须翻转 label，否则 ROC/F1 会完全错误。
+
+转换脚本：
+- `scripts/driving_alg_evalu/convert_ed24_driving_to_npy.py`
+
+转换命令：
+```powershell
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/driving_alg_evalu/convert_ed24_driving_to_npy.py --overwrite
+```
+
+输出目录：
+- `D:\hjx_workspace\scientific_reserach\dataset\DND21\mydriving_ED24\driving_noise_{1hz...9hz}_ed24_withlabel`
+
+转换质量检查：
+
+| Level | Events | Signal | Noise | Duration (s) | Estimated Hz/pixel |
+|---|---:|---:|---:|---:|---:|
+| 1hz | 3,081,599 | 2,732,313 | 349,286 | 5.976212 | 0.650 |
+| 2hz | 3,429,942 | 2,732,313 | 697,629 | 5.976212 | 1.298 |
+| 3hz | 3,777,023 | 2,732,313 | 1,044,710 | 5.976212 | 1.943 |
+| 4hz | 4,126,122 | 2,732,313 | 1,393,809 | 5.976212 | 2.593 |
+| 5hz | 4,478,144 | 2,732,313 | 1,745,831 | 5.976212 | 3.247 |
+| 6hz | 4,822,218 | 2,732,313 | 2,089,905 | 5.976212 | 3.887 |
+| 7hz | 5,169,768 | 2,732,313 | 2,437,455 | 5.976212 | 4.534 |
+| 8hz | 5,515,979 | 2,732,313 | 2,783,666 | 5.976212 | 5.178 |
+| 9hz | 5,867,956 | 2,732,313 | 3,135,643 | 5.976212 | 5.832 |
+
+注意：
+1. 这批数据的目录名是 `1...9hz`，但按事件数和时长估算的实际噪声率约为标称值的 `0.65` 倍。
+2. 因此它不适合直接当作论文 `1/3/5 Hz/pixel` 绝对对齐数据，但适合验证“外部生成 Driving 加噪数据”下 EBF 的相对表现。
+
+ED24 外部 Driving 数据上的 EBF 结果：
+
+运行设置：
+- EBF 参数：`radius=2`（论文 `s=5`）、`\(\tau=32000us\)`。
+- 时间戳单位：`--tick-ns 1000`，因为 `driving_mix_result.txt` 时间戳为微秒整数。
+- 阈值：`0.0:0.1:15.0`。
+- 为避免 Python EBF 对每个阈值重复运行，本次使用 myEVS Numba EBF score 内核一次性计算 score，再按阈值生成 ROC；计算口径等价于 `score > threshold`。
+
+结果文件：
+- `data/DND21/mydriving_ED24/EBF/roc_ebf_{1hz...9hz}_ed24_paperfix.csv`
+- `data/DND21/mydriving_ED24/EBF/ebf_ed24_driving_1to9hz_summary.csv`
+- `data/DND21/mydriving_ED24/EBF/ebf_ed24_driving_allhz_summary.csv`
+
+| Level | Estimated Hz/pixel | AUC step=0.1 | Exact score AUC | Best-F1 threshold | TPR | FPR | Precision | Best F1 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1hz | 0.650 | 0.950013 | 0.950048 | 0.4 | 0.973967 | 0.295572 | 0.962654 | 0.968278 |
+| 2hz | 1.298 | 0.948619 | 0.948665 | 0.9 | 0.960809 | 0.226274 | 0.943281 | 0.951964 |
+| 3hz | 1.943 | 0.946503 | 0.946547 | 1.4 | 0.940665 | 0.174585 | 0.933738 | 0.937189 |
+| 4hz | 2.593 | 0.944914 | 0.944962 | 1.8 | 0.926896 | 0.148886 | 0.924266 | 0.925579 |
+| 5hz | 3.247 | 0.943417 | 0.943472 | 2.1 | 0.915241 | 0.138341 | 0.911926 | 0.913581 |
+| 6hz | 3.887 | 0.942176 | 0.942268 | 2.3 | 0.910690 | 0.135378 | 0.897905 | 0.904252 |
+| 7hz | 4.534 | 0.940643 | 0.940747 | 2.7 | 0.895203 | 0.118098 | 0.894705 | 0.894954 |
+| 8hz | 5.178 | 0.939436 | 0.939534 | 2.8 | 0.894398 | 0.122407 | 0.877630 | 0.885935 |
+| 9hz | 5.832 | 0.938252 | 0.938358 | 3.2 | 0.878133 | 0.106354 | 0.877969 | 0.878051 |
+
+初步结论：
+1. 在这批 ED24 外部 Driving 加噪数据上，EBF AUC 随实际噪声率增加单调下降，趋势正常。
+2. `1hz/3hz/5hz` 三档的 AUC 接近或高于论文表格中的 `1/3/5 Hz` 数值，但该数据实际噪声率低于目录名标称值，因此不能直接说明已经复现论文结果。
+3. 该结果说明：之前 JAER 数据与论文差距不太可能来自 EBF 公式或 AUC 积分本身，更可能来自数据生成/标签口径/事件区间差异。
+
+ED24 外部 Driving 数据上的 N149 结果：
+
+运行设置：
+- 数据：同上 `driving_noise_{1hz...9hz}_ed24_withlabel`。
+- N149 网格：`radius={2,3,4,5}`，`\(\tau={16,32,64,128,256,512}ms\)`。
+- ROC：使用 N149 连续 score 构造 ROC，并统计每个 `(radius,\tau)` 的 AUC；下表的 `N149 AUC` 是每档噪声下所有网格中的最佳 AUC。
+
+结果文件：
+- `data/DND21/mydriving_ED24/N149/roc_n149_{1hz...9hz}_ed24.csv`
+- `data/DND21/mydriving_ED24/N149/n149_ed24_driving_1to9hz_summary.csv`
+- `data/DND21/mydriving_ED24/N149/n149_ed24_driving_allhz_summary.csv`
+- `data/DND21/mydriving_ED24/n149_vs_ebf_ed24_driving_1to9hz_summary.csv`
+
+| Level | Estimated Hz/pixel | EBF AUC | N149 AUC | N149-EBF AUC | EBF Best F1 | N149 Best F1 | N149 best-AUC `(r,tau)` |
+|---|---:|---:|---:|---:|---:|---:|---|
+| 1hz | 0.650 | 0.950013 | 0.940363 | -0.009650 | 0.968278 | 0.966613 | `(2,32ms)` |
+| 2hz | 1.298 | 0.948619 | 0.940156 | -0.008463 | 0.951964 | 0.946244 | `(2,32ms)` |
+| 3hz | 1.943 | 0.946503 | 0.940568 | -0.005935 | 0.937189 | 0.931406 | `(2,32ms)` |
+| 4hz | 2.593 | 0.944914 | 0.941424 | -0.003490 | 0.925579 | 0.919301 | `(2,32ms)` |
+| 5hz | 3.247 | 0.943417 | 0.942468 | -0.000950 | 0.913581 | 0.909426 | `(2,32ms)` |
+| 6hz | 3.887 | 0.942176 | 0.940074 | -0.002103 | 0.904252 | 0.896588 | `(2,32ms)` |
+| 7hz | 4.534 | 0.940643 | 0.940966 | +0.000323 | 0.894954 | 0.889008 | `(3,32ms)` |
+| 8hz | 5.178 | 0.939436 | 0.943954 | +0.004518 | 0.885935 | 0.884242 | `(5,16ms)` |
+| 9hz | 5.832 | 0.938252 | 0.939164 | +0.000911 | 0.878051 | 0.871728 | `(3,32ms)` |
+
+N149 对比结论：
+1. 低噪声到中等噪声（实际约 `0.65~3.89 Hz/pixel`）下，EBF 的 AUC 和 Best-F1 均优于 N149。
+2. 高噪声端（实际约 `4.53~5.83 Hz/pixel`）下，N149 的最佳 AUC 开始接近或略高于 EBF，尤其 `8hz` 档高出约 `0.0045`。
+3. 但 N149 的 Best-F1 仍低于 EBF，说明 N149 在高噪声端可能改善整体排序能力（AUC），但最佳二分类工作点的 precision/recall 折中仍不如 EBF 稳定。
+4. N149 最佳 AUC 多数落在 `tau=32ms`，说明在这批数据上时间尺度仍与 EBF 论文参数接近；高噪声 `8hz` 档偏向更大空间邻域 `r=5` 和更短时间窗 `16ms`。
+
+#### 4.2.2 EBF + N149（按 EBF 论文最优参数重跑，paper-driving）
+
+论文参数依据（Guo 2025）：
+1. 在 Driving 上，作者给出的最优组合为 `s=5`、`\(\tau=32ms\)`（其中 `s=5` 对应 `radius=2`）。
+2. 论文 Table II 报告 EBF AUC（Driving）：`1Hz=0.948`, `3Hz=0.942`, `5Hz=0.936`。
+
+本工程重跑设置：
+1. 数据：`mydriving_paper` 三档（`light/light_mid/mid`）；
+2. EBF：固定 `radius=2`, `tau=32000us`，扫阈值（`min-neighbors`）得到 ROC 与 AUC；
+3. N149：固定 `radius=2`, `tau=32000us`, `sigma=1.5`，阈值直接使用“同档 EBF 的 best-F1 阈值”。
+
+执行命令（EBF）：
+```powershell
+D:/software/Anaconda_envs/envs/myEVS/python.exe -m myevs.cli roc --clean "D:/hjx_workspace/scientific_reserach/dataset/DND21/mydriving_paper/driving_noise_light_paper_withlabel/driving_noise_light_signal_only.npy" --noisy "D:/hjx_workspace/scientific_reserach/dataset/DND21/mydriving_paper/driving_noise_light_paper_withlabel/driving_noise_light_labeled.npy" --assume npy --width 346 --height 260 --tick-ns 1000 --engine python --method ebf --radius-px 2 --time-us 32000 --param min-neighbors --values "0,0.25,0.5,0.75,1,1.25,1.5,1.75,2,2.5,3,3.5,4,5,6,8" --match-us 0 --match-bin-radius 0 --tag "ebf_paper_r2_tau32000_light" --out-csv data/DND21/mydriving_paper_eval/EBF/roc_ebf_light_paperfix.csv
+```
+
+结果文件：
+1. `data/DND21/mydriving_paper_eval/EBF/roc_ebf_{light,light_mid,mid}_paperfix.csv`
+2. `data/DND21/mydriving_paper_eval/ebf_n149_fixed_by_ebf_threshold.csv`
+
+EBF AUC 与论文对比：
+
+| Level | Noise (Hz/pixel) | Paper EBF AUC | Python-noise EBF AUC | JAER-noise EBF AUC |
+|---|---:|---:|---:|---:|
+| light | 1 | 0.948 | 0.926983 | 0.928231 |
+| light_mid | 3 | 0.942 | 0.921316 | 0.923244 |
+| mid | 5 | 0.936 | 0.916600 | 0.919252 |
+
+JAER-noise EBF 运行设置：
+```powershell
+# values 为 0.0 到 15.0，步长 0.1；固定 s=5(radius=2), tau=32ms
+D:/software/Anaconda_envs/envs/myEVS/python.exe -m myevs.cli roc `
+  --clean "D:/hjx_workspace/scientific_reserach/dataset/DND21/mydriving_jaer/driving_noise_light_jaer_withlabel/driving_noise_light_signal_only.npy" `
+  --noisy "D:/hjx_workspace/scientific_reserach/dataset/DND21/mydriving_jaer/driving_noise_light_jaer_withlabel/driving_noise_light_labeled.npy" `
+  --assume npy --width 346 --height 260 --tick-ns 12.5 `
+  --method ebf --radius-px 2 --time-us 32000 `
+  --param min-neighbors --values "0.0,0.1,...,15.0" `
+  --tag ebf_r2_tau32000_jaer `
+  --roc-convention paper --match-us 0 --match-bin-radius 0 `
+  --out-csv data/DND21/mydriving_jaer/EBF/roc_ebf_light_jaer_paperfix.csv --progress
+```
+
+JAER-noise best-F1 点：
+
+| Level | AUC | Best-F1 threshold | TPR | FPR | Precision | Best F1 |
+|---|---:|---:|---:|---:|---:|---:|
+| light | 0.928231 | 0.6 | 0.971682 | 0.373343 | 0.947881 | 0.959634 |
+| light_mid | 0.923244 | 1.7 | 0.929725 | 0.235392 | 0.902001 | 0.915653 |
+| mid | 0.919252 | 2.4 | 0.902238 | 0.199822 | 0.863174 | 0.882274 |
+
+EBF ROC/AUC 统计口径排查（2026-04-29）：
+
+1. 官方 EBF 代码最终也是把每个事件的 `sumfeature` 当作连续 score，再用 `sklearn.metrics.roc_auc_score(y_true, y_score)` 计算 AUC；因此理论上不应强依赖手工阈值步长。
+2. 官方 EBF score 构成是：同极性邻域事件的线性时间核累加，中心像素置零，不包含额外空间高斯核。
+
+$$
+s_i=\sum_{j\in\mathcal{N}_r(i),\,j\ne i}
+\mathbf{1}(p_j=p_i)\cdot
+\max\left(0,1-\frac{|t_i-t_j|}{\tau}\right)
+$$
+
+3. 当前 myEVS 的 `method=ebf` 与上述公式一致：按事件流顺序维护每个像素最近时间戳和极性；对同极性邻居累加线性时间核；自身事件不参与当前 score；score 计算后再更新自身状态。
+4. DND21/EBF 辅助脚本中也存在从 CSV 的 `(FPR,TPR)` 点排序后用梯形积分 `auc(fpr,tpr)` 的路径。因此本次同时比较了三种口径：
+   - `step=0.1`：原始阈值网格。
+   - `step=0.01`：更细阈值网格，模拟“连续扫频”。
+   - `exact score AUC`：不手动指定阈值，按所有不同 score 的排序直接构造 ROC，等价于 `roc_auc_score` 口径。
+
+| Level | Paper AUC | step=0.1 AUC | step=0.01 AUC | Exact score AUC | step 0.01 gain | Paper - Exact |
+|---|---:|---:|---:|---:|---:|---:|
+| light | 0.948000 | 0.928231 | 0.928250 | 0.928296 | +0.000020 | 0.019704 |
+| light_mid | 0.942000 | 0.923244 | 0.923270 | 0.923320 | +0.000028 | 0.018680 |
+| mid | 0.936000 | 0.919252 | 0.919277 | 0.919328 | +0.000028 | 0.016672 |
+
+排查结论：
+
+1. 把阈值从 `0.1` 加密到 `0.01` 只提升约 `2e-5` 到 `3e-5` AUC。
+2. 完全连续的 exact score AUC 也只比 `0.01` 阈值网格高约 `5e-5`。
+3. 因此当前 `0.0167~0.0197` 的论文差距不是由阈值扫频太粗或梯形积分精度导致。
+4. 后续应优先继续排查：clean 数据是否与论文完全同版、JAER 输出事件的起止边界/重复事件处理、DND21 官方 label 生成口径、坐标/极性编码方向，以及官方实验是否在某些预处理步骤中裁剪或过滤了事件区间。
+
+固定阈值对比（N149 使用 EBF 同档 best-F1 阈值）：
+
+| Level | EBF Thr (best-F1) | Method | TPR | FPR | Precision | F1 | Accuracy |
+|---|---:|---|---:|---:|---:|---:|---:|
+| light | 0.50 | EBF | 0.975002 | 0.396886 | 0.944884 | 0.959707 | 0.928391 |
+| light | 0.50 | N149 | 0.940655 | 0.318305 | 0.953752 | 0.947158 | 0.908197 |
+| light_mid | 1.75 | EBF | 0.927291 | 0.228449 | 0.904169 | 0.915584 | 0.880444 |
+| light_mid | 1.75 | N149 | 0.765692 | 0.096433 | 0.948603 | 0.847390 | 0.807166 |
+| mid | 2.50 | EBF | 0.897832 | 0.193437 | 0.866288 | 0.881778 | 0.859737 |
+| mid | 2.50 | N149 | 0.644994 | 0.048619 | 0.948764 | 0.767930 | 0.772877 |
+
+结论：
+1. 按 `s=5, tau=32ms` 重跑后，AUC 走势仍是 `1Hz > 3Hz > 5Hz`，趋势与论文一致。
+2. 换成 JAER 原链路导出的噪声后，AUC 只比 Python-noise 版本提高约 `0.001~0.003`，仍低于论文约 `0.017~0.020`。
+3. 因此“不直接调用 JAER 加噪”不是主要差异来源；下一步应优先检查 DND21/EBF 原始 ROC 统计协议、clean 数据版本、坐标/极性编码口径，以及 EBF 官方代码的阈值扫频/积分方式。
+4. 在“同阈值”约束下，N149 的 FPR 更低但 TPR 下降更明显，导致 F1 普遍低于 EBF；这符合“阈值跨算法迁移不一定公平”的预期。
 
 ## 5. scripts 目录功能说明（补充）
 
@@ -363,8 +650,10 @@ Driving 脚本会在每个噪声级目录自动查找：
 ### 5.3 driving_alg_evalu
 
 - `run_driving_alg.ps1`（新增）：Driving 数据集统一入口
+- `run_driving_alg_paper.ps1`：Driving 论文口径数据统一入口（`mydriving_paper`）
 - `run_driving_{knoise|evflow|ynoise|ts|mlpf|pfd}.ps1`（新增）：单算法入口
 - `run_driving_n149.ps1`：Driving 上 N149 独立扫频入口（当前不并入 `run_driving_alg.ps1`）
+- `generate_driving_paper_noise.py`：从 paper clean txt 生成 1/3/5Hz 的标注噪声 npy（FPN: sigma-decades=0.5）
 
 ### 5.4 noise_analyze
 

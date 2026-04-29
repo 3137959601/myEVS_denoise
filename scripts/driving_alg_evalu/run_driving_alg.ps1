@@ -3,6 +3,8 @@
   [string[]]$Algorithms = @(),
   [string]$MlpfModelPattern = "",
   [int]$MaxEvents = 200000,
+  [string]$DatasetRoot = "D:\hjx_workspace\scientific_reserach\dataset\DND21\mydriving",
+  [string]$DatasetSuffix = "slomo_shot_withlabel",
   [ValidateSet("coarse", "dense")]
   [string]$SweepProfile = "coarse"
 )
@@ -25,11 +27,10 @@ $WIDTH = 346
 $HEIGHT = 260
 $IS_DENSE = ($SweepProfile.ToLower() -eq "dense")
 
-$ROOT = "D:\hjx_workspace\scientific_reserach\dataset\DND21\mydriving"
 $LEVELS = @(
-  @{ Name = "light"; Dir = Join-Path $ROOT "driving_noise_light_slomo_shot_withlabel" },
-  @{ Name = "light_mid"; Dir = Join-Path $ROOT "driving_noise_light_mid_slomo_shot_withlabel" },
-  @{ Name = "mid"; Dir = Join-Path $ROOT "driving_noise_mid_slomo_shot_withlabel" }
+  @{ Name = "light"; Dir = Join-Path $DatasetRoot ("driving_noise_light_{0}" -f $DatasetSuffix) },
+  @{ Name = "light_mid"; Dir = Join-Path $DatasetRoot ("driving_noise_light_mid_{0}" -f $DatasetSuffix) },
+  @{ Name = "mid"; Dir = Join-Path $DatasetRoot ("driving_noise_mid_{0}" -f $DatasetSuffix) }
 )
 $ALL_ALGS = @("baf", "stcf", "ebf", "knoise", "evflow", "ynoise", "ts", "mlpf", "pfd")
 
@@ -224,9 +225,17 @@ function Prepare-CompactNpy {
     return $InPath
   }
   $baseName = [System.IO.Path]::GetFileNameWithoutExtension($InPath)
+  $pathBytes = [System.Text.Encoding]::UTF8.GetBytes([string]$InPath)
+  $sha1 = [System.Security.Cryptography.SHA1]::Create()
+  try {
+    $hash = $sha1.ComputeHash($pathBytes)
+  } finally {
+    $sha1.Dispose()
+  }
+  $hashHex = ([System.BitConverter]::ToString($hash)).Replace("-", "").Substring(0, 10).ToLower()
   $cacheDir = "data/DND21/mydriving/_compact_cache/{0}" -f $Level
   New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
-  $outPath = Join-Path $cacheDir ("{0}_n{1}.npy" -f $baseName, $MaxEvents)
+  $outPath = Join-Path $cacheDir ("{0}_{1}_n{2}.npy" -f $baseName, $hashHex, $MaxEvents)
   $out = & $PY scripts/truncate_npy_events.py --in $InPath --out $outPath --max-events $MaxEvents --overwrite --print-path-only
   if ($LASTEXITCODE -ne 0) {
     throw "truncate_npy_events failed for: $InPath"
@@ -452,3 +461,4 @@ foreach ($lv in $LEVELS) {
 }
 Write-Host ("=== DONE: driving {0} ===" -f $alg)
 }
+
