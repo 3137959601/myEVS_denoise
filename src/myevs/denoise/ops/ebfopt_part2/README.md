@@ -9110,7 +9110,7 @@ delta（n146 gamma=2.0）：
 
 $$
 raw_{same} = \sum_{p_j=p_i}\left(1-\frac{\Delta t_{ij}}{\tau}\right)^2_+\cdot \exp\left(-\frac{d_{ij}^2}{2\sigma_s^2}\right)
-$$
+$$ 
 
 2) `rawopp`（同一时空核但异极性分量）：
 

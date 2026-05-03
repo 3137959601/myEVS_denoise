@@ -33,6 +33,7 @@ $MATCH_BIN_RADIUS = 0
 
 $SPLITS = @(
   @{ Name = "light"; Noisy = "Pedestrain_06_1.8.npy"; Clean = "Pedestrain_06_1.8_signal_only.npy" },
+  @{ Name = "light_mid"; Noisy = "Pedestrain_06_2.1.npy"; Clean = "Pedestrain_06_2.1_signal_only.npy" },
   @{ Name = "mid"; Noisy = "Pedestrain_06_2.5.npy"; Clean = "Pedestrain_06_2.5_signal_only.npy" },
   @{ Name = "heavy"; Noisy = "Pedestrain_06_3.3.npy"; Clean = "Pedestrain_06_3.3_signal_only.npy" }
 )
