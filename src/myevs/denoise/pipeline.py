@@ -62,6 +62,7 @@ _METHOD_ID_TO_NAME = {
     15: "ts",  # TimeSurface (cuke-emlb)
     16: "mlpf",  # MLP-inspired lightweight proxy (cuke-emlb aligned features)
     17: "pfd",  # Polarity-Focused Denoising (PFD/PFDs)
+    18: "n149",  # N149 score core (research baseline)
 }
 
 _NAME_TO_METHOD_ID = {v: k for k, v in _METHOD_ID_TO_NAME.items()}
@@ -99,6 +100,7 @@ def _normalize_method_token(token: str) -> str:
         "15": "ts",
         "16": "mlpf",
         "17": "pfd",
+        "18": "n149",
         "rate": "ratelimit",
         "global": "globalgate",
         "dg": "dp",
@@ -216,8 +218,101 @@ def denoise_stream(
     tb = timebase or TimeBase()
 
     eng = (engine or "python").strip().lower()
-    if eng not in ("python", "numba"):
-        raise ValueError(f"Unknown engine: {engine!r} (expected 'python' or 'numba')")
+    if eng not in ("python", "numba", "cpp"):
+        raise ValueError(f"Unknown engine: {engine!r} (expected 'python', 'numba', or 'cpp')")
+
+    if eng == "cpp":
+        tokens: list[str]
+        if cfg.pipeline:
+            tokens = [_normalize_method_token(x) for x in cfg.pipeline]
+        else:
+            tokens = [_normalize_method_token(str(cfg.method))]
+
+        if len(tokens) != 1:
+            raise ValueError("engine='cpp' supports only a single method token without pipeline composition")
+
+        token = tokens[0]
+        try:
+            from myevs import _native_emlb
+        except Exception as e:  # pragma: no cover
+            raise RuntimeError(
+                "Failed to import myevs._native_emlb. Reinstall with native build support: "
+                "python -m pip install -e ."
+            ) from e
+
+        w = int(meta.width)
+        h = int(meta.height)
+        win_ticks = int(tb.us_to_ticks(int(cfg.time_window_us)))
+        show_on = bool(cfg.show_on)
+        show_off = bool(cfg.show_off)
+
+        if token in ("stc", "stcf"):
+            native = _native_emlb.StcNative(
+                w, h, int(win_ticks), max(0, int(cfg.radius_px)), max(0, int(cfg.min_neighbors)), show_on, show_off
+            )
+        elif token == "baf":
+            native = _native_emlb.BafNative(
+                w, h, int(win_ticks), max(0, int(cfg.radius_px)), show_on, show_off
+            )
+        elif token == "ebf":
+            native = _native_emlb.EbfNative(
+                w, h, int(win_ticks), max(0, int(cfg.radius_px)), float(cfg.min_neighbors), show_on, show_off
+            )
+        elif token == "n149":
+            native = _native_emlb.N149Native(
+                w, h, int(win_ticks), max(0, int(cfg.radius_px)), float(cfg.min_neighbors), show_on, show_off
+            )
+        elif token == "knoise":
+            native = _native_emlb.KNoiseNative(
+                w, h, int(win_ticks), max(0, int(cfg.min_neighbors)), show_on, show_off
+            )
+        elif token == "ynoise":
+            native = _native_emlb.YNoiseNative(
+                w,
+                h,
+                int(win_ticks),
+                max(0, int(cfg.radius_px)),
+                max(0, int(cfg.min_neighbors)),
+                show_on,
+                show_off,
+            )
+        elif token == "ts":
+            native = _native_emlb.TimeSurfaceNative(
+                w,
+                h,
+                int(win_ticks),
+                max(0, int(cfg.radius_px)),
+                float(cfg.min_neighbors),
+                show_on,
+                show_off,
+            )
+        elif token == "evflow":
+            native = _native_emlb.EventFlowNative(
+                w,
+                h,
+                int(win_ticks),
+                max(1, int(cfg.radius_px)),
+                float(cfg.min_neighbors),
+                show_on,
+                show_off,
+            )
+        else:
+            raise ValueError("engine='cpp' currently supports stc / baf / ebf / n149 / knoise / ynoise / ts / evflow without pipeline")
+
+        for b in batches:
+            if len(b) == 0:
+                continue
+
+            t_arr = np.asarray(b.t, dtype=np.uint64)
+            x_arr = np.asarray(b.x, dtype=np.int32)
+            y_arr = np.asarray(b.y, dtype=np.int32)
+            p_arr = np.asarray(b.p, dtype=np.int8)
+
+            keep_u8 = native.accept_batch(t_arr, x_arr, y_arr, p_arr)
+            if keep_u8.any():
+                keep = np.asarray(keep_u8, dtype=bool)
+                yield EventBatch(t=t_arr[keep], x=b.x[keep], y=b.y[keep], p=p_arr[keep])
+        return
 
     # Fast path: numba backend for selected single-op methods.
     if eng == "numba":

@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["scikit-build-core>=0.9", "pybind11>=2.11", "cmake>=3.20", "wheel"]
+build-backend = "scikit_build_core.build"
 
 [project]
 name = "myevs"
@@ -18,8 +18,5 @@ dependencies = [
 [project.scripts]
 myevs = "myevs.cli:main"
 
-[tool.setuptools]
-package-dir = {"" = "src"}
-
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.scikit-build]
+wheel.packages = ["src/myevs"]

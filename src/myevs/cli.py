@@ -835,7 +835,7 @@ def build_parser() -> argparse.ArgumentParser:
             "9 fastdecay (dv-processing FastDecayNoiseFilter; --time-us=half-life, --radius-px=subdivision, --min-neighbors=threshold), "
             "10 ebf (Guo 2025; --time-us=tau, --radius-px=radius (TI25 uses 2), --min-neighbors=score-threshold), "
             "11 ebf_optimized (research; global adaptive noise normalization; --min-neighbors=normalized-threshold), "
-            "12 knoise, 13 evflow, 14 ynoise, 15 ts, 16 mlpf, 17 pfd"
+            "12 knoise, 13 evflow, 14 ynoise, 15 ts, 16 mlpf, 17 pfd, 18 n149"
         ),
     )
     p_den.add_argument(
@@ -848,9 +848,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_den.add_argument(
         "--engine",
-        choices=["python", "numba"],
+        choices=["python", "numba", "cpp"],
         default="python",
-        help="execution engine (numba currently accelerates stc / ts / evflow / pfd for single-method runs)",
+        help="execution engine (cpp accelerates stc / baf / ebf / n149 / knoise / ynoise / ts / evflow; numba accelerates stc / ts / evflow / pfd for single-method runs)",
     )
     p_den.add_argument(
         "--tick-ns",
@@ -1017,7 +1017,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Qt method id/name: 0 none, 1 stc, 2 refractory, 3 hotpixel, 4 baf, "
             "5 combo(stc+refractory), 6 ratelimit, 7 globalgate, 8 dp, "
-            "9 fastdecay, 10 ebf, 11 ebf_optimized, 12 knoise, 13 evflow, 14 ynoise, 15 ts, 16 mlpf, 17 pfd"
+            "9 fastdecay, 10 ebf, 11 ebf_optimized, 12 knoise, 13 evflow, 14 ynoise, 15 ts, 16 mlpf, 17 pfd, 18 n149"
         ),
     )
     p_sw.add_argument(
@@ -1028,9 +1028,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_sw.add_argument(
         "--engine",
-        choices=["python", "numba"],
+        choices=["python", "numba", "cpp"],
         default="python",
-        help="execution engine (numba currently accelerates stc / ts / evflow / pfd for single-method runs)",
+        help="execution engine (cpp accelerates stc / baf / ebf / n149 / knoise / ynoise / ts / evflow; numba accelerates stc / ts / evflow / pfd for single-method runs)",
     )
     p_sw.add_argument("--values", required=True, help="comma-separated values, e.g. 5,10,20,50")
     p_sw.add_argument("--tick-ns", type=float, default=12.5)
@@ -1082,7 +1082,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Denoise method id/name: 0 none, 1 stc, 2 refractory, 3 hotpixel, 4 baf, "
             "5 combo(stc+refractory), 6 ratelimit, 7 globalgate, 8 dp, 9 fastdecay, 10 ebf, 11 ebf_optimized, "
-            "12 knoise, 13 evflow, 14 ynoise, 15 ts, 16 mlpf, 17 pfd"
+            "12 knoise, 13 evflow, 14 ynoise, 15 ts, 16 mlpf, 17 pfd, 18 n149"
         ),
     )
     p_roc.add_argument(
@@ -1098,9 +1098,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_roc.add_argument(
         "--engine",
-        choices=["python", "numba"],
+        choices=["python", "numba", "cpp"],
         default="python",
-        help="execution engine (numba currently accelerates stc / ts / evflow / pfd for single-method runs)",
+        help="execution engine (cpp accelerates stc / baf / ebf / n149 / knoise / ynoise / ts / evflow; numba accelerates stc / ts / evflow / pfd for single-method runs)",
     )
     p_roc.add_argument("--tick-ns", type=float, default=12.5)
     p_roc.add_argument("--time-us", type=int, default=2000)
