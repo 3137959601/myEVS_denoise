@@ -16,10 +16,12 @@ N175_BETA_INIT = 0.65
 N175_K_SFRAC = 2.0 / 3.0
 N175_K_MIX = 1.0 / 5.0
 N175_RSTATE_INIT = 0.10
-N175_RHYTHM_PRESSURE_COEFF = 1.0 / 3.0
-N175_RHYTHM_GOOD_COEFF = 1.0 / 4.0
-N175_SUPPORT_GOOD_COEFF = 1.0 / 4.0
-N175_RHYTHM_PI_COEFF = 0.5
+N175_RHYTHM_PRESSURE_COEFF = 0.0
+N175_RHYTHM_GOOD_COEFF = 3.0 / 4.0
+N175_SUPPORT_GOOD_COEFF = 0.0
+N175_PI_BAD_COEFF = 0.50
+N175_PI_R_COEFF = 0.50
+N175_PI_GOOD_COEFF = 0.75
 
 _N175_KERNEL = None
 _N175_TABLE_CACHE: dict[tuple[int, float], tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
@@ -128,7 +130,9 @@ def _try_build_n175_kernel():
         rhythm_pressure_coeff: float,
         rhythm_good_coeff: float,
         support_good_coeff: float,
-        rhythm_pi_coeff: float,
+        pi_bad_coeff: float,
+        pi_r_coeff: float,
+        pi_good_coeff: float,
         out: np.ndarray,
     ) -> None:
         n = int(t.shape[0])
@@ -181,11 +185,21 @@ def _try_build_n175_kernel():
             sgood_coeff = 0.0
         if sgood_coeff > 2.0:
             sgood_coeff = 2.0
-        rpi_coeff = float(rhythm_pi_coeff)
-        if rpi_coeff < 0.0:
-            rpi_coeff = 0.0
-        if rpi_coeff > 2.0:
-            rpi_coeff = 2.0
+        pi_bad = float(pi_bad_coeff)
+        if pi_bad < 0.0:
+            pi_bad = 0.0
+        if pi_bad > 2.0:
+            pi_bad = 2.0
+        pi_r = float(pi_r_coeff)
+        if pi_r < 0.0:
+            pi_r = 0.0
+        if pi_r > 2.0:
+            pi_r = 2.0
+        pi_good = float(pi_good_coeff)
+        if pi_good < 0.0:
+            pi_good = 0.0
+        if pi_good > 2.0:
+            pi_good = 2.0
 
         mstate = 0.0
         rstate = float(N175_RSTATE_INIT)
@@ -432,7 +446,12 @@ def _try_build_n175_kernel():
                 mix_gain = 0.5
             if mix_gain > 2.0:
                 mix_gain = 2.0
-            rhythm_scale = 1.0 + rpi_coeff * rhythm_pressure - rgood_coeff * rhythm_good
+            pi_proxy = pi_bad * rhythm_bad + pi_r * (1.0 - sfrac) - pi_good * rhythm_good
+            if pi_proxy < 0.0:
+                pi_proxy = 0.0
+            if pi_proxy > 1.0:
+                pi_proxy = 1.0
+            rhythm_scale = 1.0 + pi_proxy
             if rhythm_scale < 0.5:
                 rhythm_scale = 0.5
             if rhythm_scale > 1.75:
@@ -516,7 +535,9 @@ def _score_stream_n175_core(
     rhythm_pressure_coeff: float = N175_RHYTHM_PRESSURE_COEFF,
     rhythm_good_coeff: float = N175_RHYTHM_GOOD_COEFF,
     support_good_coeff: float = N175_SUPPORT_GOOD_COEFF,
-    rhythm_pi_coeff: float = N175_RHYTHM_PI_COEFF,
+    pi_bad_coeff: float = N175_PI_BAD_COEFF,
+    pi_r_coeff: float = N175_PI_R_COEFF,
+    pi_good_coeff: float = N175_PI_GOOD_COEFF,
     scores_out: np.ndarray | None = None,
 ) -> np.ndarray:
     n = int(ev.t.shape[0])
@@ -558,7 +579,9 @@ def _score_stream_n175_core(
         float(rhythm_pressure_coeff),
         float(rhythm_good_coeff),
         float(support_good_coeff),
-        float(rhythm_pi_coeff),
+        float(pi_bad_coeff),
+        float(pi_r_coeff),
+        float(pi_good_coeff),
         scores_out,
     )
     return scores_out
@@ -594,6 +617,8 @@ def score_stream_n175(
         rhythm_pressure_coeff=float(N175_RHYTHM_PRESSURE_COEFF),
         rhythm_good_coeff=float(N175_RHYTHM_GOOD_COEFF),
         support_good_coeff=float(N175_SUPPORT_GOOD_COEFF),
-        rhythm_pi_coeff=float(N175_RHYTHM_PI_COEFF),
+        pi_bad_coeff=float(N175_PI_BAD_COEFF),
+        pi_r_coeff=float(N175_PI_R_COEFF),
+        pi_good_coeff=float(N175_PI_GOOD_COEFF),
         scores_out=scores_out,
     )

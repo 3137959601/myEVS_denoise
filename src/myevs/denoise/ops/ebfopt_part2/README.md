@@ -11493,3 +11493,1302 @@ score'=score\cdot \operatorname{clip}_{[0.75,1.25]}\left(1+g(B-0.5)\right)
 - `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/ebf_n176_bench.exe`
 - `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/ebf_n176_bench_static.exe`
 - `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/cpp_eval_n176_20260427.csv`
+### 24.38 2026-05-03：n177 稀疏星形实时变体与 C++ n176 fast path 复核
+
+本轮目标是回答一个更严格的问题：能否在精度仍稳定领先 n149/n176 主线的前提下，显著降低每事件邻域访问量，使 C++ 实现有机会接近 `10M events/s`。
+
+#### 24.38.1 设计结论先行
+
+结论：**本轮没有得到可替代 n176 的正式新主线**。
+
+1. `n177` 通过稀疏星形采样把每事件邻域访问从 `s=9` 的约 `80` 个降到约 `16~20` 个，Numba 吞吐显著提高；
+2. 但 `n177` 在 compact400k 的 AUC/F1 明显低于 n176/n149，不能满足“精度稳定领先”的要求；
+3. C++ `n176 fast path` 保持 n176 分数与精度完全一致，但单线程吞吐只小幅提高，仍达不到 `10M events/s`；
+4. 因此，当前不能为了实时性直接砍掉大量空间采样点；n176 的精度依赖较完整的局部空间支持。
+
+#### 24.38.2 n177 稀疏星形采样公式
+
+实现文件：
+
+- `src/myevs/denoise/ops/ebfopt_part2/n177_sparse_star_realtime_backbone.py`
+
+接入脚本：
+
+- `scripts/ED24_alg_evalu/sweep_ebf_slim_labelscore_grid.py`
+
+n177 保留 n176 的门控主公式，只替换邻域集合。
+
+n176 的密集邻域为：
+
+$$
+\mathcal{N}_{dense}(r)=\{(dx,dy): -r\le dx\le r,\ -r\le dy\le r,\ (dx,dy)\ne(0,0)\}
+$$
+
+当 `s=9,r=4` 时：
+
+$$
+|\mathcal{N}_{dense}|=(2r+1)^2-1=80
+$$
+
+n177 的稀疏星形邻域为：
+
+$$
+\mathcal{N}_{star}=\mathcal{N}_{1}\cup \mathcal{A}_{mid}\cup \mathcal{A}_{r}\cup \mathcal{D}_{2}
+$$
+
+其中：
+
+$$
+\mathcal{N}_{1}=\{(dx,dy):dx,dy\in\{-1,0,1\},(dx,dy)\ne(0,0)\}
+$$
+
+$$
+\mathcal{A}_{u}=\{(u,0),(-u,0),(0,u),(0,-u)\}
+$$
+
+$$
+\mathcal{D}_{2}=\{(2,2),(2,-2),(-2,2),(-2,-2)\}
+$$
+
+`u` 取 `max(2,r//2)` 与 `r`。因此 `s=9,r=4` 时实际采样点约为 `20`。
+
+每个采样点仍使用 n176 的高斯空间权重与平方线性时间权重：
+
+$$
+w_s(dx,dy)=\exp\left(-\frac{dx^2+dy^2}{2\sigma^2}\right),\quad \sigma=2.8
+$$
+
+$$
+w_t=\left(1-\frac{\Delta t}{\tau}\right)^2
+$$
+
+同极性与反极性支持：
+
+$$
+R^+=\sum_{j\in\mathcal{N}_{star}} w_t w_s\mathbf{1}[p_j=p_i]
+$$
+
+$$
+R^-=\sum_{j\in\mathcal{N}_{star}} w_t w_s\mathbf{1}[p_j=-p_i]
+$$
+
+其余 `mstate/rstate/u_eff/support_scale` 仍沿用 n176，目的是单独验证“邻域稀疏化”对精度和速度的影响。
+
+#### 24.38.3 n177 compact400k 实验
+
+运行命令：
+
+```powershell
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/ED24_alg_evalu/sweep_ebf_slim_labelscore_grid.py `
+  --variant n177 --max-events 400000 --s-list 5,7,9 `
+  --tau-us-list 32000,64000,128000,256000 `
+  --out-dir data/ED24/myPedestrain_06/EBF_Part2/_slim_n177_sparse_star_compact400k
+```
+
+结果汇总：
+
+| env | n177 best-AUC | best-AUC tag | n177 best-F1 | best-F1 tag |
+|---|---:|---|---:|---|
+| light | 0.936393 | ebf_n177_labelscore_s7_tau256000 | 0.939075 | ebf_n177_labelscore_s7_tau256000 |
+| mid | 0.911364 | ebf_n177_labelscore_s7_tau256000 | 0.768281 | ebf_n177_labelscore_s7_tau128000 |
+| heavy | 0.907926 | ebf_n177_labelscore_s7_tau256000 | 0.723151 | ebf_n177_labelscore_s7_tau128000 |
+
+对照 README 24.36 的 n176 compact400k：
+
+| variant | mean AUC | mean F1 | heavy F1 |
+|---|---:|---:|---:|
+| n149（2.8） | 0.944325 | 0.846442 | 0.769616 |
+| n176 | 0.944428 | 0.846527 | 0.770728 |
+| n177 sparse-star | 0.918561 | 0.810169 | 0.723151 |
+
+结论：n177 的降复杂度是有效的，但精度损失过大，不能作为正式算法主线。
+
+#### 24.38.4 n177 Numba 吞吐
+
+运行命令：
+
+```powershell
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/noise_analyze/bench_variant_runtime.py `
+  --labeled-npy D:/hjx_workspace/scientific_reserach/dataset/ED24/myPedestrain_06/Pedestrain_06_3.3.npy `
+  --variant-list n176,n177 --s 9 --tau-us 128000 --max-events 400000 --repeats 5 `
+  --out-csv data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/runtime_n176_n177_20260503_heavy_compact400k_s9_tau128.csv
+```
+
+| variant | events | s | tau_us | best_seconds | mean_seconds | best events/s | mean events/s |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| n176 | 400000 | 9 | 128000 | 0.252131 | 0.258587 | 1,586,479 | 1,546,868 |
+| n177 | 400000 | 9 | 128000 | 0.071055 | 0.073510 | 5,629,434 | 5,441,425 |
+
+结论：邻域访问数减少后，吞吐提升约 `3.5x`，说明瓶颈判断是正确的；但该速度收益以明显精度损失为代价。
+
+#### 24.38.5 C++ n176 fast path
+
+修改文件：
+
+- `cpp/ebf_n176_bench.cpp`
+
+新增模式：
+
+- `uniform0or1=2` 表示启用 fast path；
+- 公式仍是 n176；
+- 空间权重仍为 Gaussian；
+- 主要优化是预计算 `(dx,dy,delta,weight)`，并对非边界事件走无边界判断的 interior path。
+
+编译命令：
+
+```powershell
+& 'D:/software/Qt/Tools/mingw1310_64/bin/g++.exe' -std=c++17 -O2 -DNDEBUG `
+  cpp/ebf_n176_bench.cpp `
+  -o data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/ebf_n176_bench_fast_o2.exe
+```
+
+运行时需要 Qt MinGW runtime 在 PATH 中：
+
+```powershell
+$env:PATH='D:/software/Qt/Tools/mingw1310_64/bin;' + $env:PATH
+```
+
+heavy compact400k，`s=9,tau=128ms` 对照：
+
+| mode | best_seconds | mean_seconds | best events/s | mean events/s | AUC | best-F1 |
+|---|---:|---:|---:|---:|---:|---:|
+| C++ n176 original | 0.204540 | 0.211316 | 1,955,610 | 1,892,900 | 0.931929 | 0.770804 |
+| C++ n176 fast path | 0.180415 | 0.191243 | 2,217,110 | 2,091,580 | 0.931929 | 0.770804 |
+
+不同窗口下 fast path 吞吐：
+
+| variant | s | tau_us | best events/s | mean events/s |
+|---|---:|---:|---:|---:|
+| C++ n176 fast path | 5 | 128000 | 6,109,490 | 5,667,880 |
+| C++ n176 fast path | 7 | 128000 | 3,413,570 | 3,195,430 |
+| C++ n176 fast path | 9 | 128000 | 2,217,110 | 2,091,580 |
+
+精度核对命令：
+
+```powershell
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/noise_analyze/eval_cpp_scores.py `
+  --bin data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/cpp_heavy_compact400k.bin `
+  --scores data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/cpp_n176_heavy_s9_tau128_fastmode2_scores.bin `
+  --tag cpp_n176_heavy_s9_tau128_fastmode2 `
+  --out-csv data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/cpp_eval_n176_fast_20260503.csv
+```
+
+结论：fast path 是安全工程优化，但提速幅度有限。它证明了直接 C++ 优化不能单线程到 `10M events/s`，除非减少窗口或进一步改变执行模型。
+
+#### 24.38.6 本轮经验与下一步
+
+1. 仅做固定稀疏采样会破坏 n176 的排序能力，尤其是 mid/heavy；
+2. 完整空间支持仍是 n176 稳定优于 n149 的关键，不建议在正式算法中直接使用 n177；
+3. C++ fast path 可以作为后续工程基线，但不是算法突破；
+4. 若必须接近 `10M events/s` 且保留 n176 精度，下一步不应再简单砍邻域，而应验证“两级条件计算”：先用极轻量近邻门控筛掉明显无支持事件，只对候选事件执行完整 n176；
+5. 这个两级方案的关键不是固定少采样，而是保持最终候选事件使用完整 n176 score，从而尽量保留 ROC 排序。
+
+本轮产物：
+
+- `src/myevs/denoise/ops/ebfopt_part2/n177_sparse_star_realtime_backbone.py`
+- `data/ED24/myPedestrain_06/EBF_Part2/_slim_n177_sparse_star_compact400k/`
+- `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/runtime_n176_n177_20260503_heavy_compact400k_s9_tau128.csv`
+- `cpp/ebf_n176_bench.cpp`
+- `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/ebf_n176_bench_fast_o2.exe`
+- `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/cpp_eval_n176_fast_20260503.csv`
+
+### 24.39 2026-05-03：固定 s=5 实时性判断与 n178 两级门控
+
+本节回答两个问题：
+
+1. 如果固定 `s=5`，当前 C++ n176 fast path 是否满足已用数据集的实时事件率；
+2. 是否能用“两级门控”进一步降低平均计算量，同时保持 n176/n149 级别精度。
+
+#### 24.39.1 固定 s=5 的 C++ 吞吐
+
+沿用 24.38 的 C++ fast path，heavy compact400k，`tau=128ms`：
+
+| variant | s | best events/s | mean events/s |
+|---|---:|---:|---:|
+| C++ n176 fast path | 5 | 6,109,490 | 5,667,880 |
+| C++ n176 fast path | 7 | 3,413,570 | 3,195,430 |
+| C++ n176 fast path | 9 | 2,217,110 | 2,091,580 |
+
+因此，若只看吞吐，`s=5` 的单线程 C++ 实测均值约 `5.67M events/s`，峰值约 `6.11M events/s`。
+
+#### 24.39.2 各数据集事件率
+
+统计脚本输出：
+
+- `data/summary/dataset_event_rates_20260503.csv`
+
+代表性事件率如下：
+
+| dataset | representative split | events | duration_s | events/s |
+|---|---|---:|---:|---:|
+| ED24 myPedestrain_06 | heavy 3.3V | 500000 | 5.813575 | 86,006 |
+| ED24 myBicycle_02 | mid 2.5V | 266531 | 3.240121 | 82,260 |
+| DND21 mydriving | heavy shot | 5,971,585 | 2.999900 | 1,990,595 |
+| DND21 mydriving | mid shot | 4,911,344 | 2.999900 | 1,637,169 |
+| DND21 mydriving | light_mid shot | 4,505,553 | 2.999900 | 1,501,901 |
+| DND21 mydriving | light shot | 4,126,456 | 2.999900 | 1,375,531 |
+| DND21 mydriving_paper | mid | 6,446,142 | 5.984807 | 1,077,084 |
+| DVSCLEAN | MAH00447 ratio100 | 374,702 | 0.372728 | 1,005,296 |
+| LED | scene_1028 100ms | 1,828,236 | 0.099999 | 18,282,540 |
+| LED | scene_100 100ms | 1,992,811 | 0.099999 | 19,928,310 |
+| LED | scene_1046 100ms | 1,996,926 | 0.099999 | 19,969,460 |
+
+判断：
+
+1. 对 `ED24 / Driving / DVSCLEAN`，`s=5` 单线程 C++ n176 fast path 的 `5.67M events/s` 均值足够覆盖当前数据事件率；
+2. 对 `LED 100ms` 拼接片段，事件率约 `18M~20M events/s`，单线程 `s=5` 不满足，需要多线程、SIMD、GPU/FPGA 或更激进结构优化；
+3. 这里说的是吞吐实时性，不代表精度最优。
+
+#### 24.39.3 固定 s=5 的精度代价
+
+从 n176 compact400k 结果中抽取固定 `s=5/7/9`：
+
+| variant | s | light AUC/F1 | mid AUC/F1 | heavy AUC/F1 | mean AUC | mean F1 |
+|---|---:|---:|---:|---:|---:|---:|
+| n176 | 5 | 0.941730 / 0.943930 | 0.922261 / 0.785060 | 0.917538 / 0.742103 | 0.927177 | 0.823698 |
+| n176 | 7 | 0.951166 / 0.953042 | 0.935422 / 0.805183 | 0.932149 / 0.763407 | 0.939579 | 0.840544 |
+| n176 | 9 | 0.954849 / 0.956281 | 0.940771 / 0.812573 | 0.937665 / 0.770728 | 0.944428 | 0.846527 |
+
+对照 n149：
+
+| variant | mean AUC | mean F1 | heavy F1 |
+|---|---:|---:|---:|
+| n149（2.8） | 0.944325 | 0.846442 | 0.769616 |
+| n176 s=9 | 0.944428 | 0.846527 | 0.770728 |
+| n176 s=5 | 0.927177 | 0.823698 | 0.742103 |
+
+结论：固定 `s=5` 可以满足多数数据集实时性，但不能满足“精度稳定领先 n149”的算法主线要求。它适合作为低算力实时配置，而不是论文主结果。
+
+#### 24.39.4 n178 两级近邻门控
+
+实现文件：
+
+- `src/myevs/denoise/ops/ebfopt_part2/n178_twostage_realtime_gate_backbone.py`
+
+接入脚本：
+
+- `scripts/ED24_alg_evalu/sweep_ebf_slim_labelscore_grid.py`
+
+设计：
+
+Stage-1 只检查中心事件周围 `3x3` 是否存在同极性、时间窗内的近邻：
+
+$$
+G_i=\mathbf{1}\left[\exists j\in\mathcal{N}_{1}(i),\ p_j=p_i,\ 0<t_i-t_j\le\tau\right]
+$$
+
+若：
+
+$$
+G_i=0
+$$
+
+则直接输出：
+
+$$
+S_i=0
+$$
+
+若：
+
+$$
+G_i=1
+$$
+
+则执行完整 n176 dense score。这样理论上保留候选事件的完整排序，只跳过明显孤立事件。
+
+#### 24.39.5 n178 compact400k 实验
+
+运行命令：
+
+```powershell
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/ED24_alg_evalu/sweep_ebf_slim_labelscore_grid.py `
+  --variant n178 --max-events 400000 --s-list 5,7,9 `
+  --tau-us-list 32000,64000,128000,256000 `
+  --out-dir data/ED24/myPedestrain_06/EBF_Part2/_slim_n178_twostage_gate_compact400k
+```
+
+结果：
+
+| env | n178 best-AUC | best-AUC tag | n178 best-F1 | best-F1 tag |
+|---|---:|---|---:|---|
+| light | 0.887570 | ebf_n178_labelscore_s7_tau256000 | 0.911931 | ebf_n178_labelscore_s5_tau32000 |
+| mid | 0.881875 | ebf_n178_labelscore_s9_tau256000 | 0.793404 | ebf_n178_labelscore_s9_tau256000 |
+| heavy | 0.890888 | ebf_n178_labelscore_s9_tau256000 | 0.755832 | ebf_n178_labelscore_s9_tau128000 |
+
+吞吐：
+
+```powershell
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/noise_analyze/bench_variant_runtime.py `
+  --labeled-npy D:/hjx_workspace/scientific_reserach/dataset/ED24/myPedestrain_06/Pedestrain_06_3.3.npy `
+  --variant-list n176,n177,n178 --s 9 --tau-us 128000 --max-events 400000 --repeats 5 `
+  --out-csv data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/runtime_n176_n177_n178_20260503_heavy_compact400k_s9_tau128.csv
+```
+
+| variant | best events/s | mean events/s | heavy best-F1 |
+|---|---:|---:|---:|
+| n176 | 1,537,388 | 1,489,402 | 0.770728 |
+| n177 | 5,500,611 | 5,224,273 | 0.723151 |
+| n178 | 2,879,981 | 2,733,478 | 0.755832 |
+
+结论：
+
+1. n178 比 n176 快约 `1.8x`，但远不如 n177；
+2. n178 的 heavy F1 接近但仍低于 n176/n149，light AUC 明显崩掉；
+3. 近邻硬门控会把低密度但真实的边缘/轨迹事件置零，破坏 ROC 排序；
+4. 因此 n178 也不能作为正式主线。
+
+#### 24.39.6 当前可用结论
+
+1. `s=5` 在 C++ fast path 下对 ED24、Driving、DVSCLEAN 当前事件率基本满足实时吞吐；
+2. `s=5` 不满足 LED 100ms 高事件率片段；
+3. `s=5` 精度不稳定领先 n149，因此只能作为实时配置；
+4. `n177/n178` 证明了“减少平均邻域访问”确实能提速，但目前都会损失排序精度；
+5. 下一步若继续追求 `10M events/s + n176 精度`，更合理的是工程并行化和低层优化，而不是继续加硬门控：
+   - C++ 多线程按事件块并行需要处理状态依赖，不能直接乱分块；
+   - 可优先做空间 tile 分区并行，或按时间块带 halo 的近似并行；
+   - 单线程方向则应做 SoA 状态压缩、SIMD-friendly offset 展开、减少分支、边界事件单独处理。
+
+本轮产物：
+
+- `src/myevs/denoise/ops/ebfopt_part2/n178_twostage_realtime_gate_backbone.py`
+- `data/ED24/myPedestrain_06/EBF_Part2/_slim_n178_twostage_gate_compact400k/`
+- `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/runtime_n176_n177_n178_20260503_heavy_compact400k_s9_tau128.csv`
+- `data/summary/dataset_event_rates_20260503.csv`
+
+### 24.40 2026-05-06：C++ fast32 工程优化最终尝试
+
+本节转向 C++ 工程优化，不再改变 n176 的算法判据。目标是验证：如果只做底层实现优化，是否可以在保持 n176 排序精度的前提下接近 `10M events/s`。
+
+#### 24.40.1 实现
+
+修改文件：
+
+- `cpp/ebf_n176_bench.cpp`
+
+新增 `space_mode=3`：
+
+```text
+space_mode=0: 原始 Gaussian 空间核
+space_mode=1: 原始 uniform 空间核
+space_mode=2: Gaussian fast path，预计算邻域 offset，double/uint64 状态
+space_mode=3: Gaussian fast32 path，预计算邻域 offset，float/uint32 热状态
+```
+
+fast32 的工程假设：
+
+1. score 主热路径使用 `float`，减少浮点带宽和寄存器压力；
+2. `last_ts` 从 `uint64` 压缩到 `uint32`，减少状态表内存带宽；
+3. compact / 短片段实验的时间跨度远小于 `2^32` ticks，因此不会发生时间戳溢出；
+4. 对长时间流式数据，正式 C++ 工程仍应使用 `uint64` 或做滑动时间基准重映射。
+
+编译命令：
+
+```powershell
+& 'D:/software/Qt/Tools/mingw1310_64/bin/g++.exe' -std=c++17 -O3 -march=native -DNDEBUG `
+  cpp/ebf_n176_bench.cpp `
+  -o data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/ebf_n176_bench_fast32_o3native.exe
+```
+
+运行前需要：
+
+```powershell
+$env:PATH='D:/software/Qt/Tools/mingw1310_64/bin;' + $env:PATH
+```
+
+#### 24.40.2 速度结果
+
+测试数据：
+
+- `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/cpp_heavy_compact400k.bin`
+- `events=400000`
+- `tau=128000us`
+- `repeats=7`
+
+输出文件：
+
+- `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/runtime_cpp_n176_fast32_20260506_heavy_compact400k.csv`
+
+| variant | s | compile | best events/s | mean events/s |
+|---|---:|---|---:|---:|
+| C++ n176 fast32 | 5 | `-O3 -march=native` | 6,189,570 | 5,748,950 |
+| C++ n176 fast32 | 7 | `-O3 -march=native` | 3,580,870 | 3,357,080 |
+| C++ n176 fast32 | 9 | `-O3 -march=native` | 2,196,220 | 2,106,510 |
+| C++ n176 fast path | 5 | `-O3 -march=native` | 6,044,140 | 5,548,970 |
+| C++ n176 fast path | 7 | `-O3 -march=native` | 3,319,730 | 3,131,390 |
+| C++ n176 fast path | 9 | `-O3 -march=native` | 2,055,590 | 1,949,900 |
+
+结论：
+
+1. `fast32` 对 `s=5/7/9` 都有小幅提速；
+2. `s=5` 均值从约 `5.55M` 提升到 `5.75M events/s`；
+3. `s=9` 均值约 `2.11M events/s`；
+4. 单线程 C++ 工程优化仍无法接近 `10M events/s`。
+
+#### 24.40.3 精度核对
+
+评估命令：
+
+```powershell
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/noise_analyze/eval_cpp_scores.py `
+  --bin data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/cpp_heavy_compact400k.bin `
+  --scores data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/cpp_n176_heavy_s9_tau128_fast32_scores.bin `
+  --tag cpp_n176_heavy_s9_tau128_fast32 `
+  --out-csv data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/cpp_eval_n176_fast32_20260506.csv
+```
+
+输出文件：
+
+- `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/cpp_eval_n176_fast32_20260506.csv`
+
+| variant | s | AUC | best-F1 | precision | recall | best-F1 threshold |
+|---|---:|---:|---:|---:|---:|---:|
+| C++ n176 fast32 | 5 | 0.910792 | 0.742126 | 0.804315 | 0.688863 | 2.044110 |
+| C++ n176 fast32 | 7 | 0.925730 | 0.763478 | 0.819707 | 0.714468 | 2.770421 |
+| C++ n176 fast32 | 9 | 0.931929 | 0.770804 | 0.827149 | 0.721645 | 3.292385 |
+
+`s=9` 与原 fast path 的 heavy compact400k 结果一致：
+
+| variant | AUC | best-F1 |
+|---|---:|---:|
+| C++ n176 fast path | 0.931929 | 0.770804 |
+| C++ n176 fast32 | 0.931929 | 0.770804 |
+
+因此 fast32 没有破坏当前 compact 短片段的排序结果。
+
+#### 24.40.4 最终判断
+
+本轮结果说明：
+
+1. n176 的主要瓶颈不是 `double` 或 `uint64` 状态，而是每事件邻域访问次数和分支判断；
+2. 单线程 C++ 优化可以把 `s=5` 推到约 `5.75M events/s`，但达不到 `10M events/s`；
+3. 若使用 `s=9` 保持 n149/n176 级别精度，吞吐只有约 `2.1M events/s`；
+4. 继续做单线程微优化的收益已经很低，不建议再作为主路线；
+5. 若必须达到 `10M events/s`，下一步应转向以下工程路线，而不是继续改公式：
+
+| 路线 | 是否保持精度 | 风险 | 备注 |
+|---|---|---|---|
+| 多线程空间 tile + halo | 较可能 | 中 | 需要处理跨 tile 邻域和时间状态一致性 |
+| SIMD/手写 AVX2 offset 展开 | 可能 | 中高 | 分支较多，收益不确定 |
+| GPU 批处理 | 不完全实时 | 中 | 延迟增加，但吞吐高 |
+| FPGA/ASIC pipeline | 最符合实时 | 高 | 需要硬件设计，不适合当前 Python/C++ 快速迭代 |
+| 固定 `s=5` 实时配置 | 精度下降 | 低 | 可覆盖 ED24/Driving/DVSCLEAN，但不能稳定领先 n149 |
+
+对论文策略的含义：
+
+1. 若强调“精度稳定领先 n149”，主结果应继续使用 `s=9` 或自适应窗口，不应承诺单线程 `10M events/s`；
+2. 若强调“工程实时”，可以把 `s=5 fast32` 作为实时配置，但要明确它是速度优先版本；
+3. 真正兼顾二者需要 C++ 多线程或硬件并行，而不是继续用单线程公式微调解决。
+
+### 24.41 2026-05-06：时间戳位宽裁剪与并行化路线判断
+
+本节回答两个问题：
+
+1. 是否真的需要完整 `uint32` 时间戳状态；
+2. 是否可以通过进一步 C++ 工程优化达到 `10M events/s`。
+
+#### 24.41.1 时间戳状态能否小于 32 位
+
+滤波计算只使用：
+
+$$
+0 < \Delta t = t_i - T(x,y) \le \tau
+$$
+
+因此理论上不需要保存完整全局时间戳，只需要能正确判断最近一次事件与当前事件的相对时间差。
+
+尝试了两个压缩版本：
+
+| mode | 状态 | 思路 | 结论 |
+|---|---|---|---|
+| `fast16q` | `uint16 low` | 保存量化后的 16 位时间戳 | 不可靠，老像素超过 16 位周期后会产生假近邻 |
+| `fast24q` | `uint16 low + uint8 epoch` | 保存 24 位量化时间戳 | 精度基本恢复，但速度不升反降 |
+
+其中 `fast16q` 的问题是：即使使用 modulo 差值，只要某个像素长时间未更新，旧时间戳跨过多个 16 位周期后仍可能被误判为窗口内事件。
+
+`fast24q` 使用：
+
+$$
+t^{24}_i = ((t_i >> q) \bmod 2^{24})
+$$
+
+并计算：
+
+$$
+\Delta t_q = (t^{24}_i - T^{24}(x,y)) \bmod 2^{24}
+$$
+
+再判断：
+
+$$
+0 < \Delta t_q \le \tau_q
+$$
+
+这样能避免 16 位周期假匹配，但需要额外读取 `epoch` 表，并进行 24 位重构，实际速度低于 `fast32`。
+
+#### 24.41.2 实测结果
+
+测试条件：
+
+- 数据：`cpp_heavy_compact400k.bin`
+- `tau=128000us`
+- `repeats=7`
+- 编译：`-O3 -march=native`
+
+输出文件：
+
+- `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/runtime_cpp_n176_timewidth_20260506_heavy_compact400k.csv`
+- `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/cpp_eval_n176_fast16q_20260506.csv`
+- `data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/cpp_eval_n176_fast24q_20260506.csv`
+
+| variant | s | mean events/s | AUC | best-F1 |
+|---|---:|---:|---:|---:|
+| fast32 | 5 | 5,748,950 | 0.910792 | 0.742126 |
+| fast32 | 7 | 3,357,080 | 0.925730 | 0.763478 |
+| fast32 | 9 | 2,106,510 | 0.931929 | 0.770804 |
+| fast16q | 5 | 5,445,420 | 0.885454 | 0.660316 |
+| fast16q | 7 | 3,021,810 | 0.897136 | 0.675827 |
+| fast16q | 9 | 1,872,770 | 0.900879 | 0.678559 |
+| fast24q | 5 | 5,466,370 | 0.910777 | 0.742103 |
+| fast24q | 7 | 2,987,270 | 0.925721 | 0.763484 |
+| fast24q | 9 | 1,844,640 | 0.931920 | 0.770803 |
+
+结论：
+
+1. `uint16` 时间戳不适合这个算法，除非额外维护有效期/epoch，否则会产生假近邻；
+2. `uint24` 逻辑时间戳可以保持精度，但 C++ 中没有原生 24 位整数，拆表读取反而变慢；
+3. 当前 CPU 实现中，`uint32` 是最合理的时间戳状态宽度；
+4. 继续裁剪时间戳不是达到 `10M events/s` 的有效方向。
+
+#### 24.41.3 `-Ofast` 编译测试
+
+另外测试了 `-Ofast -march=native`：
+
+| variant | s | mean events/s |
+|---|---:|---:|
+| fast32 `-Ofast` | 5 | 5,571,920 |
+| fast32 `-Ofast` | 9 | 2,006,900 |
+| fast24q `-Ofast` | 5 | 5,422,530 |
+| fast24q `-Ofast` | 9 | 1,872,030 |
+
+`-Ofast` 没有比 `-O3` 更好，因此继续靠编译参数优化意义不大。
+
+#### 24.41.4 对多线程/SIMD路线的判断
+
+这个滤波器存在强状态依赖：
+
+$$
+S_i = f(e_i,\ T_{i-1}, P_{i-1})
+$$
+
+每个事件处理后都会更新：
+
+$$
+T_i(x_i,y_i)=t_i,\quad P_i(x_i,y_i)=p_i
+$$
+
+所以不能把事件序列直接均匀切成多线程并行，否则后一个线程读不到前一个线程更新的状态，结果会偏离在线算法。
+
+可行路线如下：
+
+| 路线 | 是否精确 | 预期速度 | 工程复杂度 | 当前判断 |
+|---|---|---:|---:|---|
+| 事件序列直接 OpenMP 分块 | 否 | 高 | 低 | 不建议，破坏在线状态 |
+| 空间 tile + halo | 近似 | 中高 | 高 | 可做，但会引入边界与跨 tile 时间状态误差 |
+| 时间块 + warm-up halo | 近似 | 中 | 中 | 适合离线评估，不是真正低延迟在线 |
+| AVX2/SIMD offset 展开 | 近似保持 | 中 | 高 | 分支太多，收益不确定 |
+| FPGA/ASIC pipeline | 是 | 高 | 很高 | 最符合实时硬件目标 |
+
+因此，如果论文目标是“实时算法”，推荐表述为：
+
+1. 算法结构适合 C++/硬件 pipeline；
+2. 当前单线程 C++ `s=5` 可达到约 `5.7M events/s`，能覆盖 ED24、Driving、DVSCLEAN；
+3. 对 LED 这类接近 `20M events/s` 的高事件率数据，需要多核或硬件并行；
+4. 不应声称单线程 CPU 已达到 `10M events/s`。
+
+#### 24.41.5 最终工程结论
+
+本轮 C++ 优化已经把几个低层方向都验证了一遍：
+
+| 方向 | 结果 |
+|---|---|
+| 预计算 offset + interior fast path | 有效，小幅提速，保持精度 |
+| float 热路径 | 有效但收益有限 |
+| `uint32` timestamp | 当前最优折中 |
+| `uint16` timestamp | 不可靠，精度明显下降 |
+| `uint24` 逻辑 timestamp | 精度可保，但速度下降 |
+| `-Ofast` | 无收益 |
+| 硬门控/稀疏邻域 | 提速明显，但精度不稳定 |
+
+因此，若继续追求“精度领先 n149 + 10M events/s”，单线程 C++ 已经不是主要突破口。下一步只能选择：
+
+1. 接受 `s=5 fast32` 作为实时配置，论文主打资源/实时；
+2. 保留 `s=9` 作为精度配置，论文主打精度；
+3. 做多线程/硬件 pipeline，并明确这是工程系统贡献，而不是单纯算法公式贡献。
+
+### 24.42 2026-05-06：是否实现多核 tile pipeline 的最终判断
+
+本节判断是否继续实现多核 tile pipeline。
+
+#### 24.42.1 为什么不能直接事件分块并行
+
+n176/n149 类算法是在线状态滤波器。第 `i` 个事件的 score 依赖此前所有事件更新后的状态表：
+
+$$
+S_i=f(e_i,\ T_{i-1},P_{i-1})
+$$
+
+事件处理后立即更新：
+
+$$
+T_i(x_i,y_i)=t_i,\quad P_i(x_i,y_i)=p_i
+$$
+
+如果直接把事件序列切成多个线程：
+
+$$
+\{e_1,\ldots,e_N\}\rightarrow
+\{e_1,\ldots,e_k\},\{e_{k+1},\ldots,e_N\}
+$$
+
+第二个线程在计算 `e_{k+1}` 时看不到第一个线程刚更新的状态，因此结果不再等价于在线算法。这种实现可以得到高吞吐数字，但不适合作为论文算法结果。
+
+#### 24.42.2 tile pipeline 的问题
+
+空间 tile 并行的想法是把图像分成若干块：
+
+$$
+\Omega=\Omega_1\cup\Omega_2\cup\cdots\cup\Omega_M
+$$
+
+每个线程只处理一个 tile 内的事件。但 n176 的邻域窗口会跨 tile：
+
+$$
+\mathcal{N}_s(x_i,y_i)\cap \Omega_j \ne \varnothing,\quad j\ne tile(i)
+$$
+
+因此必须引入 halo 区域。问题是 halo 内的状态也在随事件实时变化，若不同线程同时更新，会出现两类问题：
+
+1. **读写竞争**：一个 tile 正在读邻域状态，另一个 tile 同时更新该状态；
+2. **时间顺序误差**：跨 tile 事件的先后顺序会被局部线程调度打乱。
+
+可选修正方式包括：
+
+| 方法 | 结果 |
+|---|---|
+| 给全局状态加锁 | 线程同步开销大，基本抵消并行收益 |
+| 每个 tile 维护私有 halo 副本 | 速度快，但跨 tile 状态滞后，结果近似 |
+| 按时间块同步 halo | 可控近似，但延迟增加，工程复杂 |
+| 硬件 pipeline 严格按事件流顺序处理 | 最合理，但超出当前 Python/C++ 实验工程范围 |
+
+#### 24.42.3 当前是否值得实现
+
+当前阶段不建议继续实现多核 tile pipeline，原因：
+
+1. 精确并行需要复杂同步，吞吐收益不确定；
+2. 近似并行虽然能提高速度，但会引入新的精度变量，难以与 n149/n176 的算法贡献分开解释；
+3. 目前论文主线仍是算法创新，不应把大量篇幅转向并行工程系统；
+4. 已经验证单线程 C++ 优化的上限，足以支撑“实时配置”和“精度配置”的区分。
+
+因此，本项目当前最终版本建议定为：
+
+| 版本 | 用途 | 参数 | 结论 |
+|---|---|---|---|
+| `n176 / fast32 / s=9` | 精度主版本 | Gaussian 空间核，`uint32` 时间戳 | 精度稳定，接近或略优 n149 |
+| `n176 / fast32 / s=5` | 实时配置 | 小窗口，`uint32` 时间戳 | 约 `5.75M events/s`，覆盖 ED24/Driving/DVSCLEAN |
+| `n149` | baseline 对照 | 原始极性增强公式 | 论文对比基线 |
+
+最终论文表述建议：
+
+1. 主算法结果报告 `n176 / s=9`，强调相对 n149 的精度稳定性；
+2. 工程实时性报告 `fast32 / s=5`，说明在常规事件率数据集上可实时；
+3. 对 LED 这类 `18M~20M events/s` 高事件率片段，说明单线程 CPU 不足，需要多核或硬件 pipeline；
+4. 不声称当前单线程 C++ 已达到 `10M events/s`。
+
+### 24.43 2026-05-06：FPGA / HLS 实时实现可行性分析
+
+本节分析如果把最终算法转向 FPGA，是否能达到实时，以及在 `XC7K325T` 这类 Kintex-7 器件上应该如何实现。
+
+#### 24.43.1 器件资源参考
+
+`XC7K325T` 主要资源量级：
+
+| resource | amount |
+|---|---:|
+| Logic cells | 326,080 |
+| Slices | 50,950 |
+| DSP48E1 | 840 |
+| 36Kb BRAM | 445 |
+| BRAM total | 16,020 Kb |
+
+这个器件的 DSP 资源非常充足，真正瓶颈不是乘法，而是状态表访问带宽。
+
+#### 24.43.2 算法硬件化瓶颈
+
+n176/n149 类算法对每个事件：
+
+$$
+e_i=(x_i,y_i,t_i,p_i)
+$$
+
+需要访问窗口：
+
+$$
+\mathcal{N}_s(x_i,y_i)
+$$
+
+若 `s=9`：
+
+$$
+|\mathcal{N}_9| = 9\times 9 - 1 = 80
+$$
+
+若 `s=5`：
+
+$$
+|\mathcal{N}_5| = 5\times 5 - 1 = 24
+$$
+
+每个邻居至少要读取：
+
+$$
+T(x,y),\quad P(x,y)
+$$
+
+并计算：
+
+$$
+\Delta t = t_i - T(x,y)
+$$
+
+$$
+w_t = \left(1-\frac{\Delta t}{\tau}\right)^2
+$$
+
+$$
+w = w_t \cdot w_s(dx,dy)
+$$
+
+然后按同极性/反极性累加：
+
+$$
+R_{same}=\sum_{j:p_j=p_i} w_j
+$$
+
+$$
+R_{opp}=\sum_{j:p_j=-p_i} w_j
+$$
+
+因此硬件瓶颈是：
+
+1. 每事件最多 80 次邻域状态读取；
+2. 状态表是随机地址访问，不能像图像卷积一样用 line buffer 完全解决；
+3. BRAM 只有双端口，不能自然支持 80 个并行读口。
+
+#### 24.43.3 推荐硬件结构
+
+推荐结构：
+
+```text
+AXI-Stream event input
+        |
+timestamp quantizer
+        |
+neighbor scheduler
+        |
++-------------------------------+
+| P-lane neighbor engine        |
+| lane0 lane1 ... lane(P-1)     |
++-------------------------------+
+        |
+same/opp/cnt reduction tree
+        |
+adaptive state update: mstate/rstate/b
+        |
+score / threshold / output event
+        |
+state table update broadcast
+```
+
+其中 `P` 是并行邻域 lane 数。每个 lane 每周期处理一个 neighbor offset。
+
+每事件周期数近似：
+
+$$
+C_{event} \approx \left\lceil\frac{s^2-1}{P}\right\rceil + C_{final}
+$$
+
+吞吐：
+
+$$
+Throughput \approx \frac{f_{clk}}{C_{event}}
+$$
+
+`C_final` 包括 mix、rhythm、support、score、状态写回，固定点实现后约 `4~8` cycle。
+
+#### 24.43.4 状态表位宽设计
+
+FPGA 上不建议使用完整 64 位时间戳。推荐使用量化相对时间戳。
+
+若最大时间窗：
+
+$$
+\tau_{max}=512ms
+$$
+
+选择时间量化：
+
+$$
+q=16us
+$$
+
+则：
+
+$$
+\tau_q = \frac{512ms}{16us}=32000 < 2^{15}
+$$
+
+可以使用约 `20bit` 状态：
+
+| field | bits |
+|---|---:|
+| timestamp low/modulo | 16 |
+| epoch / stale guard | 2 |
+| polarity | 1 |
+| valid | 1 |
+| total | 20 |
+
+注意：不能只保存裸 `uint16` timestamp。前面的 C++ 实验证明，裸 16 位会把很久以前的旧事件误判为当前时间窗内事件。
+
+#### 24.43.5 BRAM 估算
+
+设分辨率为：
+
+$$
+W\times H
+$$
+
+状态位宽：
+
+$$
+B_{state}=20bit
+$$
+
+为了每周期并行读取 `P` 个邻居，最直接可靠的方法是复制 `P` 份状态表：
+
+$$
+BRAM_{bits} \approx W\cdot H\cdot B_{state}\cdot P
+$$
+
+对于 DVS346 级分辨率：
+
+$$
+W\cdot H \approx 346\times260=89960
+$$
+
+单份状态表：
+
+$$
+89960\times20 \approx 1.80Mbit
+$$
+
+多副本估算：
+
+| P lanes | state bits | 是否适合 XC7K325T |
+|---:|---:|---|
+| 4 | 7.2 Mbit | 可行 |
+| 6 | 10.8 Mbit | 可行，但需控制 FIFO/LUTRAM |
+| 8 | 14.4 Mbit | 接近 16.0 Mbit BRAM 上限，仍可能可行 |
+
+对于 VGA 级 `640x480`：
+
+$$
+640\times480\times20 \approx 6.14Mbit
+$$
+
+此时：
+
+| P lanes | state bits | 是否适合 XC7K325T |
+|---:|---:|---|
+| 2 | 12.3 Mbit | 勉强可行 |
+| 4 | 24.6 Mbit | 超出 BRAM |
+
+因此，`XC7K325T` 上是否能跑满 `s=9` 与传感器分辨率强相关。对 DVS346 级分辨率可行；对 VGA 级分辨率需要外部存储、分区处理或更大 FPGA。
+
+#### 24.43.6 DSP / LUT 估算
+
+固定点实现建议：
+
+| value | format |
+|---|---|
+| time weight | `Q1.15` |
+| space weight | `Q1.15`，常量 ROM |
+| accumulated score | `Q8.16` 或 `Q10.14` |
+| adaptive states | `Q1.15` |
+
+每个 neighbor lane 主要计算：
+
+$$
+w_t = u^2
+$$
+
+$$
+w = w_t\cdot w_s
+$$
+
+每 lane 约需要 `1~2` 个 DSP48E1。若 `P=8`：
+
+| module | DSP estimate |
+|---|---:|
+| neighbor lanes | 8~16 |
+| reduction / final score | 8~16 |
+| reciprocal / scale approximation | 4~8 |
+| total | 20~40 |
+
+相对 `XC7K325T` 的 `840 DSP48E1`，DSP 不是瓶颈。
+
+LUT 主要用于地址生成、比较器、reduction tree、控制 FSM、HLS 生成的接口和调度逻辑。
+
+| implementation | LUT estimate |
+|---|---:|
+| hand RTL | 20k~50k |
+| well-written HLS | 40k~90k |
+| naive HLS | 可能超过 120k，且时序差 |
+
+#### 24.43.7 吞吐估算
+
+假设：
+
+$$
+f_{clk}=200MHz
+$$
+
+`s=9`，80 个 neighbor：
+
+| P lanes | neighbor cycles | estimated cycles/event | throughput |
+|---:|---:|---:|---:|
+| 4 | 20 | 26~30 | 6.7M~7.7M events/s |
+| 6 | 14 | 20~24 | 8.3M~10.0M events/s |
+| 8 | 10 | 16~20 | 10.0M~12.5M events/s |
+
+`s=5`，24 个 neighbor：
+
+| P lanes | neighbor cycles | estimated cycles/event | throughput |
+|---:|---:|---:|---:|
+| 2 | 12 | 18~22 | 9.1M~11.1M events/s |
+| 4 | 6 | 12~16 | 12.5M~16.7M events/s |
+
+结论：
+
+1. `s=5` 在 `XC7K325T` 上实现 `10M events/s` 比较稳；
+2. `s=9` 需要 `P=6~8` lanes，并且要求状态表副本能放下；
+3. 对 DVS346 级分辨率，`P=6` 比较稳，`P=8` 接近 BRAM 上限；
+4. 对 VGA 级分辨率，`s=9/P=6~8` 不适合 `XC7K325T`。
+
+#### 24.43.8 延迟估算
+
+若采用单事件顺序处理，不做事件间 overlap，则延迟约等于：
+
+$$
+Latency \approx C_{event}/f_{clk}
+$$
+
+例如 `s=9/P=6`：
+
+$$
+C_{event}\approx 20\sim24
+$$
+
+$$
+Latency \approx 100ns\sim120ns
+$$
+
+加 AXI-Stream FIFO、输出打包、阈值判断和 CDC 后，系统级延迟可按：
+
+$$
+0.2us\sim1us
+$$
+
+估计。这个延迟远低于事件相机去噪通常可接受的毫秒级延迟。
+
+#### 24.43.9 HLS 是否可行
+
+HLS 可以实现，但不能直接把 C++ 参考代码丢进去综合。
+
+必须满足：
+
+1. 禁用 `float/double`，全部改为 `ap_uint` / `ap_fixed`；
+2. 禁用 `exp/division`，空间核用常量 ROM，除法用 reciprocal LUT 或 Newton 近似；
+3. neighbor offset 固定展开；
+4. 状态表显式复制成 `P` 份；
+5. 每份状态表用 BRAM；
+6. 写回时广播到所有副本；
+7. pipeline 以“每事件处理完整后再读下一个事件”为基线，避免在线状态 hazard；
+8. 如果做事件间 overlap，需要额外 forwarding CAM 处理连续同像素/邻域事件，复杂度明显上升。
+
+推荐 HLS 顶层结构：
+
+```cpp
+template<int W, int H, int S, int P, int TQ_BITS>
+void n176_fpga(
+    hls::stream<EventIn>& in,
+    hls::stream<EventOut>& out
+) {
+  #pragma HLS interface axis port=in
+  #pragma HLS interface axis port=out
+
+  // 1. read event
+  // 2. process S*S-1 offsets with P lanes
+  // 3. update adaptive states
+  // 4. broadcast center update to P state replicas
+  // 5. write output
+}
+```
+
+推荐初始配置：
+
+| target | config |
+|---|---|
+| 精度版本 | `S=9, P=6, TQ_BITS=18~20` |
+| 高速版本 | `S=5, P=4, TQ_BITS=18~20` |
+| clock | `200MHz` first, then try `250MHz` |
+
+#### 24.43.10 最终判断
+
+如果使用 `XC7K325T`：
+
+| 目标 | 可行性 | 判断 |
+|---|---|---|
+| `s=5` 达到 `10M events/s` | 高 | 可行，资源压力可控 |
+| `s=9` 达到 `10M events/s`，DVS346 分辨率 | 中高 | 可行但 BRAM 紧张，需要 P=6~8 |
+| `s=9` 达到 `10M events/s`，VGA 分辨率 | 低 | BRAM 复制状态表会超资源 |
+| 用 naive HLS 一次成功 | 低 | 不现实 |
+| 用受控 HLS + 固定点 + 状态表复制 | 中高 | 推荐作为工程原型 |
+| 手写 RTL 达到最优资源/时序 | 高 | 最稳，但开发成本最高 |
+
+因此，FPGA 方向是可行的，但正确表述应为：
+
+> 本算法的计算结构适合 FPGA pipeline。对于 DVS346 级分辨率，在 XC7K325T 上使用固定点、量化时间戳、多副本状态表和 6~8 lane 邻域并行，预计可达到约 `10M events/s` 的实时吞吐；对于更高分辨率或 `s=9/P=8` 配置，BRAM 是主要约束。
+
+论文/答辩中建议强调：
+
+1. CPU 单线程不是目标硬件；
+2. 算法没有大规模卷积或神经网络权重，DSP 消耗低；
+3. 资源瓶颈是状态表多读端口；
+4. 通过状态表复制和固定点量化可以换取吞吐；
+5. HLS 可做原型，但最终高频实现可能需要手写 RTL 优化。
+
+### 24.44 2026-05-06：最终冻结版本（用于后续横向对比）
+
+本节给出最终固定口径。后续所有对比实验默认使用这个版本，不再切换到 `fast16q/fast24q` 或其他试验模式。
+
+#### 24.44.1 最终算法定义
+
+最终版本：
+
+| item | fixed value |
+|---|---|
+| 算法名 | `n179` |
+| 实现文件 | `cpp/ebf_n176_bench.cpp` |
+| C++ 模式 | `space_mode=3` (`fast32`) |
+| 空间核 | Gaussian（与 n176 一致） |
+| 时间状态 | `uint32`（实测精度不掉、速度最好） |
+| 编译参数 | `-O3 -march=native -DNDEBUG` |
+
+说明：
+
+1. `space_mode=4` (`fast16q`) 精度明显下降，弃用；
+2. `space_mode=5` (`fast24q`) 精度可保但速度低于 `fast32`，弃用；
+3. `-Ofast` 未带来收益，继续使用 `-O3`。
+4. Python/扫参入口统一为 `n179`，其评分核心与 `n176` 等价，参数保持可扫。
+
+#### 24.44.2 两套固定运行档位
+
+为避免“精度 vs 实时”口径混乱，固定两套档位：
+
+| profile | parameter | 用途 |
+|---|---|---|
+| `accuracy` | `s=9, tau=128000us` | 与其他算法做精度主对比（AUC/F1/DA 等） |
+| `realtime` | `s=5, tau=128000us` | 做实时吞吐对比（events/s） |
+
+后续报告建议：
+
+1. 精度主表使用 `accuracy`；
+2. 实时主表使用 `realtime`；
+3. 如果只保留一个最终主模型用于论文主结果，优先 `accuracy`。
+
+#### 24.44.3 固定命令模板
+
+编译：
+
+```powershell
+& 'D:/software/Qt/Tools/mingw1310_64/bin/g++.exe' -std=c++17 -O3 -march=native -DNDEBUG `
+  cpp/ebf_n176_bench.cpp `
+  -o data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/ebf_n176_bench_final.exe
+```
+
+运行前（Qt runtime）：
+
+```powershell
+$env:PATH='D:/software/Qt/Tools/mingw1310_64/bin;' + $env:PATH
+```
+
+精度档（`s=9`）：
+
+```powershell
+data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/ebf_n176_bench_final.exe `
+  <in.bin> <scores.bin> 9 128000 1000 7 3
+```
+
+实时档（`s=5`）：
+
+```powershell
+data/ED24/myPedestrain_06/EBF_Part2/noise_analyze/ebf_n176_bench_final.exe `
+  <in.bin> <scores.bin> 5 128000 1000 7 3
+```
+
+参数含义：
+
+| arg | value |
+|---|---|
+| `tick_ns` | `1000`（1us） |
+| `repeats` | `7`（实时性统计建议） |
+| `space_mode` | `3`（固定为 fast32） |
+
+#### 24.44.4 当前单线程实时性预算（已计算）
+
+预算文件：
+
+- `data/summary/n176_cpp_final_realtime_budget_20260506.csv`
+
+采用吞吐基准：
+
+| profile | mean events/s |
+|---|---:|
+| `realtime` (`s=5`) | 5,748,950 |
+| `accuracy` (`s=9`) | 2,106,510 |
+
+按各数据集已统计的最大事件率判断：
+
+| dataset | max events/s | margin s=5 | margin s=9 | s=5 实时 | s=9 实时 |
+|---|---:|---:|---:|---|---|
+| ED24 | 154,239 | 37.273x | 13.657x | YES | YES |
+| Driving | 1,990,595 | 2.888x | 1.058x | YES | YES |
+| DrivingPaper | 1,077,084 | 5.338x | 1.956x | YES | YES |
+| DrivingED24Noise | 981,886 | 5.855x | 2.145x | YES | YES |
+| DVSCLEAN | 1,005,296 | 5.719x | 2.095x | YES | YES |
+| LED | 19,969,460 | 0.288x | 0.105x | NO | NO |
+
+结论：
+
+1. 对 ED24 / Driving / DVSCLEAN，`s=9` 已可单线程实时；
+2. LED 100ms 高事件率片段对单线程 CPU 不可实时；
+3. 这与前面 FPGA 分析一致：LED 场景需要并行硬件。
+
+#### 24.44.5 后续实验约束（固定）
+
+从本节开始，后续实验统一遵守：
+
+1. `n179 = n176 score core + fast32 C++口径`；
+2. 不再切换到 `fast16q/fast24q`；
+3. 精度对比统一用 `s=9`；
+4. 实时对比统一用 `s=5`；
+5. 若要报告“单一最终模型”，默认使用 `s=9`，并在实时章节补充 `s=5`。
+
+## N181：N179 删项式简化分支（2026-05-07）
+
+本轮不再直接修改 `n179` baseline。`n179` 固定为 `n176 score core + fast32/C++ 口径`，用于后续所有对比实验；`n180` 保留为 `pi-proxy` 探索分支；新的公式简化候选命名为 `n181_simplified_n179_backbone.py`。
+
+### 设计动机
+
+此前消融显示 `rp`、`k_mix`、`support_good_coeff` 的收益很弱，且 `0.5\pi_i` 在 `u_i'` 中的正向放大解释不够直接。因此 `n181` 采用“删项式优化”：优先删除弱证据项，而不是继续增加 `pb/pr/pg` 之类自由系数。
+
+### Conservative 版本
+
+保留 `good_i` 对中心像素自激状态的抑制：
+
+$$
+\widetilde{R}_i=R_i^+ +(1-m_i)^2R_i^- ,
+$$
+
+$$
+u_i'=u_i(1-k_s s_i)(1-r_g\,good_i),
+$$
+
+$$
+S_i=\frac{\widetilde{R}_i}{1+(u_i')^2}(1+b_i s_i).
+$$
+
+解释：
+
+1. $R_i^+$ 与 $R_i^-$ 仍表示同极/反极邻域时空证据。
+2. $m_i$ 是反极混合慢状态，控制反极证据可信度。
+3. $u_i$ 是中心像素近期活跃度，用于抑制同像素快速自激。
+4. $s_i$ 是邻域同极支持率，真实结构附近支持率高，可减弱自激惩罚。
+5. $good_i$ 表示快速同极连续事件，在 conservative 版本中作为额外抑制项，防止局部连续自激被误增强。
+6. $b_i$ 是由 $u_i'$ 得到的慢状态支持增益，用于在活跃结构区域恢复支持。
+
+### Minimal 版本
+
+进一步删除 `good_i`：
+
+$$
+u_i'=u_i(1-k_s s_i),
+$$
+
+$$
+S_i=\frac{R_i^+ +(1-m_i)^2R_i^-}{1+(u_i')^2}(1+b_i s_i).
+$$
+
+### 当前实验结论
+
+ED24 行人完整扫频显示：light/light_mid 下 `minimal` 略高，中/重噪下 `conservative` 更稳。DVSCLEAN 与 LED 的 300K 快速确认也更偏向 `conservative`。因此当前建议：`n181-conservative` 作为可解释性简化候选，`n181-minimal` 作为删去 `good_i` 的消融对照。
+
+关键结果已同步写入 `src/myevs/denoise/ops/README.md` 的 N181 表格，并并入 ED24 行人/自行车对比表。
+
+## N182：恢复单个 \(\pi_i\) 项的简化分支（2026-05-08）
+
+`N182` 不修改 `N179/N181`，只验证一个问题：在 `N181-conservative` 的简洁公式中，恢复 `N179` 的原始节律压力项 \(\pi_i=(bad_i+r_i)/2\)，是否能稳定追回精度。
+
+公式：
+
+$$
+\widetilde{R}_i=R_i^+ +(1-m_i)^2R_i^- ,
+$$
+
+$$
+u_i'=u_i(1-k_s s_i)(1-r_g good_i)(1+\lambda \pi_i),\qquad \lambda\in\{0.25,0.5\},
+$$
+
+$$
+S_i=\frac{\widetilde{R}_i}{1+(u_i')^2}(1+b_i s_i).
+$$
+
+本轮小范围确认结论：
+
+1. `N182` 在 ED24 Ped mid/heavy、Bicycle mid 上比 `N181` 有小幅提升。
+2. `N182` 在 Ped light、Bicycle light、LED scene_100 上反而略低于 `N181`。
+3. `N182` 仍明显强于 `EBF`，但不能稳定追平 `N179/N149`。
+4. 因此恢复 \(\pi_i\) 不是稳定有效的简化增强；当前建议停止继续优化简化分支，保留 `N179` 为主算法，`N181/N182` 作为消融证据。
+
+详细 AUC/F1 表已写入 `src/myevs/denoise/ops/README.md` 的 N182 小节。
+
+## N183：\(\pi_i\) 来源消融（ED24 固定 s/tau，2026-05-08）
+
+本分支不再扫 `s/tau`，只验证 `\pi_i` 来源：`bad` / `r` / `avg`。
+
+- 公式仍使用 N179 风格竞争项：
+  $$
+  u_i' = u_i(1-k_s s_i)\bigl(1+0.5\pi_i-r_g\,good_i\bigr)
+  $$
+- 区别仅在 \(\pi_i\) 定义：
+  - `bad`: \(\pi_i=bad_i\)
+  - `r`: \(\pi_i=r_i\)
+  - `avg`: \(\pi_i=(bad_i+r_i)/2\)
+
+实验结论（ED24 行人+自行车）：
+
+1. `bad` 与 `r` 都有贡献，但最优来源依赖场景与噪声。
+2. 没有单一来源在全部场景稳定最优。
+3. `avg` 是稳定折中，支持 N179 中 `\pi_i=(bad_i+r_i)/2` 的工程合理性。
+4. `N183` 未稳定超过 `N179/N181/N182`，因此作为消融结论保留，不作为主线替代算法。

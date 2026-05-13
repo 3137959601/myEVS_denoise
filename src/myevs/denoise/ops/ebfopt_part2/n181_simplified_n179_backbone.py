@@ -11,23 +11,23 @@ except Exception:  # pragma: no cover
 
 
 # Rationalized constants (fraction-friendly form).
-N175_SIGMA = 2.8
-N175_BETA_INIT = 0.65
-N175_K_SFRAC = 2.0 / 3.0
-N175_K_MIX = 1.0 / 5.0
-N175_RSTATE_INIT = 0.10
-N175_RHYTHM_PRESSURE_COEFF = 1.0 / 3.0
-N175_RHYTHM_GOOD_COEFF = 1.0 / 4.0
-N175_SUPPORT_GOOD_COEFF = 1.0 / 4.0
-N175_RHYTHM_PI_COEFF = 0.5
+N181_SIGMA = 2.8
+N181_BETA_INIT = 0.65
+N181_K_SFRAC = 2.0 / 3.0
+N181_K_MIX = 1.0 / 5.0
+N181_RSTATE_INIT = 0.10
+N181_RHYTHM_GOOD_COEFF = 0.75
+N181_RHYTHM_PI_COEFF = 0.0
+N181_MODE_CONSERVATIVE = 1
+N181_MODE_MINIMAL = 0
 
-_N175_KERNEL = None
-_N175_TABLE_CACHE: dict[tuple[int, float], tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
+_N181_KERNEL = None
+_N181_TABLE_CACHE: dict[tuple[int, float], tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
 
 
 def _require_numba() -> None:
     if numba is None:
-        raise RuntimeError("n175 requires numba, but import failed")
+        raise RuntimeError("N181 requires numba, but import failed")
 
 
 def _build_compact_kernel_tables(radius_px: int, sigma_space: float) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -68,7 +68,7 @@ def _build_compact_kernel_tables(radius_px: int, sigma_space: float) -> tuple[np
     return axis_u, diag_u, int_u, int_v, lut_int if rr >= 2 else np.zeros((0,), dtype=np.float32)
 
 
-def _try_build_n175_kernel():
+def _try_build_N181_kernel():
     _require_numba()
 
     @numba.njit(inline="always", cache=True)
@@ -125,10 +125,9 @@ def _try_build_n175_kernel():
         beta_init: float,
         k_sfrac: float,
         k_mix: float,
-        rhythm_pressure_coeff: float,
         rhythm_good_coeff: float,
-        support_good_coeff: float,
         rhythm_pi_coeff: float,
+        simplify_mode: int,
         out: np.ndarray,
     ) -> None:
         n = int(t.shape[0])
@@ -166,29 +165,20 @@ def _try_build_n175_kernel():
             km = 0.0
         if km > 2.0:
             km = 2.0
-        rpress_coeff = float(rhythm_pressure_coeff)
-        if rpress_coeff < 0.0:
-            rpress_coeff = 0.0
-        if rpress_coeff > 1.0:
-            rpress_coeff = 1.0
         rgood_coeff = float(rhythm_good_coeff)
         if rgood_coeff < 0.0:
             rgood_coeff = 0.0
         if rgood_coeff > 1.0:
             rgood_coeff = 1.0
-        sgood_coeff = float(support_good_coeff)
-        if sgood_coeff < 0.0:
-            sgood_coeff = 0.0
-        if sgood_coeff > 2.0:
-            sgood_coeff = 2.0
         rpi_coeff = float(rhythm_pi_coeff)
         if rpi_coeff < 0.0:
             rpi_coeff = 0.0
-        if rpi_coeff > 2.0:
-            rpi_coeff = 2.0
+        if rpi_coeff > 6.0:
+            rpi_coeff = 6.0
+        mode = int(simplify_mode)
 
         mstate = 0.0
-        rstate = float(N175_RSTATE_INIT)
+        rstate = float(N181_RSTATE_INIT)
         if rstate < 0.0:
             rstate = 0.0
         if rstate > 1.0:
@@ -418,26 +408,19 @@ def _try_build_n175_kernel():
                 if sfrac > 1.0:
                     sfrac = 1.0
 
-            alpha_eff = alpha_eff * (1.0 - (rpress_coeff * rhythm_pressure))
-            if alpha_eff < 0.0:
-                alpha_eff = 0.0
-
             relief = 1.0 - ks * sfrac
             if relief < 0.25:
                 relief = 0.25
             if relief > 1.0:
                 relief = 1.0
-            mix_gain = 1.0 + km * mix
-            if mix_gain < 0.5:
-                mix_gain = 0.5
-            if mix_gain > 2.0:
-                mix_gain = 2.0
-            rhythm_scale = 1.0 + rpi_coeff * rhythm_pressure - rgood_coeff * rhythm_good
+            rhythm_scale = 1.0
+            if mode == N181_MODE_CONSERVATIVE:
+                rhythm_scale = 1.0 + rpi_coeff * rhythm_pressure - rgood_coeff * rhythm_good
             if rhythm_scale < 0.5:
                 rhythm_scale = 0.5
             if rhythm_scale > 1.75:
                 rhythm_scale = 1.75
-            u_eff = u_lite * relief * mix_gain * rhythm_scale
+            u_eff = u_lite * relief * rhythm_scale
             if u_eff < 0.0:
                 u_eff = 0.0
             if u_eff > 1.0:
@@ -451,7 +434,7 @@ def _try_build_n175_kernel():
 
             raw_gated = raw_same + alpha_eff * raw_opp
             base_score = raw_gated / (1.0 + (u_eff * u_eff))
-            support_scale = 1.0 + b * sfrac * (1.0 + sgood_coeff * rhythm_good)
+            support_scale = 1.0 + b * sfrac
             if support_scale < 1.0:
                 support_scale = 1.0
             if support_scale > 2.0:
@@ -464,11 +447,11 @@ def _try_build_n175_kernel():
     return _kernel
 
 
-def _get_n175_kernel():
-    global _N175_KERNEL
-    if _N175_KERNEL is None:
-        _N175_KERNEL = _try_build_n175_kernel()
-    return _N175_KERNEL
+def _get_n181_kernel():
+    global _N181_KERNEL
+    if _N181_KERNEL is None:
+        _N181_KERNEL = _try_build_N181_kernel()
+    return _N181_KERNEL
 
 
 def _get_compact_tables_cached(
@@ -484,7 +467,7 @@ def _get_compact_tables_cached(
     if sig <= 1e-6:
         sig = 1e-6
     key = (rr, sig)
-    cached = _N175_TABLE_CACHE.get(key)
+    cached = _N181_TABLE_CACHE.get(key)
     if cached is not None:
         return cached
 
@@ -498,11 +481,11 @@ def _get_compact_tables_cached(
         lut_diag[k] = np.float32(np.exp(-float(2 * u * u) * inv_2sig2))
 
     cached = (axis_u, diag_u, int_u, int_v, lut_axis, lut_diag, lut_int)
-    _N175_TABLE_CACHE[key] = cached
+    _N181_TABLE_CACHE[key] = cached
     return cached
 
 
-def _score_stream_n175_core(
+def _score_stream_n181_core(
     ev,
     *,
     width: int,
@@ -512,11 +495,10 @@ def _score_stream_n175_core(
     tb: TimeBase,
     beta_init: float,
     k_sfrac: float,
-    k_mix: float,
-    rhythm_pressure_coeff: float = N175_RHYTHM_PRESSURE_COEFF,
-    rhythm_good_coeff: float = N175_RHYTHM_GOOD_COEFF,
-    support_good_coeff: float = N175_SUPPORT_GOOD_COEFF,
-    rhythm_pi_coeff: float = N175_RHYTHM_PI_COEFF,
+    k_mix: float = 0.0,
+    rhythm_good_coeff: float = N181_RHYTHM_GOOD_COEFF,
+    rhythm_pi_coeff: float = N181_RHYTHM_PI_COEFF,
+    simplify_mode: int = N181_MODE_CONSERVATIVE,
     scores_out: np.ndarray | None = None,
 ) -> np.ndarray:
     n = int(ev.t.shape[0])
@@ -526,7 +508,7 @@ def _score_stream_n175_core(
         return scores_out
 
     tau_base_ticks = int(tb.us_to_ticks(int(tau_us)))
-    sigma_space = float(N175_SIGMA)
+    sigma_space = float(N181_SIGMA)
     if sigma_space <= 1e-6:
         sigma_space = 1e-6
 
@@ -535,7 +517,7 @@ def _score_stream_n175_core(
         float(sigma_space),
     )
 
-    ker = _get_n175_kernel()
+    ker = _get_n181_kernel()
     ker(
         ev.t.astype(np.uint64, copy=False),
         ev.x.astype(np.int32, copy=False),
@@ -555,16 +537,15 @@ def _score_stream_n175_core(
         float(beta_init),
         float(k_sfrac),
         float(k_mix),
-        float(rhythm_pressure_coeff),
         float(rhythm_good_coeff),
-        float(support_good_coeff),
         float(rhythm_pi_coeff),
+        int(simplify_mode),
         scores_out,
     )
     return scores_out
 
 
-def score_stream_n175(
+def score_stream_n181(
     ev,
     *,
     width: int,
@@ -572,28 +553,34 @@ def score_stream_n175(
     radius_px: int,
     tau_us: int,
     tb: TimeBase,
+    beta_init: float | None = None,
+    k_sfrac: float | None = None,
+    rhythm_good_coeff: float | None = None,
+    rhythm_pi_coeff: float | None = None,
+    mode: str = "conservative",
     scores_out: np.ndarray | None = None,
 ) -> np.ndarray:
-    """N175: n171 rationalized with fraction-friendly coefficients.
+    """N181: simplified n179 candidate.
 
-    Key changes relative to n171:
-    - Replaces empirical decimals with simple rational forms (1/2, 1/3, 1/4).
-    - Keeps the same state layout and computational footprint.
+    conservative: u' = u * (1 - k_s*s) * (1 - r_g*good)
+    minimal:      u' = u * (1 - k_s*s)
     """
 
-    return _score_stream_n175_core(
+    m = str(mode).strip().lower()
+    simplify_mode = N181_MODE_MINIMAL if m in {"minimal", "min"} else N181_MODE_CONSERVATIVE
+
+    return _score_stream_n181_core(
         ev,
         width=int(width),
         height=int(height),
         radius_px=int(radius_px),
         tau_us=int(tau_us),
         tb=tb,
-        beta_init=float(N175_BETA_INIT),
-        k_sfrac=float(N175_K_SFRAC),
-        k_mix=float(N175_K_MIX),
-        rhythm_pressure_coeff=float(N175_RHYTHM_PRESSURE_COEFF),
-        rhythm_good_coeff=float(N175_RHYTHM_GOOD_COEFF),
-        support_good_coeff=float(N175_SUPPORT_GOOD_COEFF),
-        rhythm_pi_coeff=float(N175_RHYTHM_PI_COEFF),
+        beta_init=float(N181_BETA_INIT if beta_init is None else beta_init),
+        k_sfrac=float(N181_K_SFRAC if k_sfrac is None else k_sfrac),
+        k_mix=0.0,
+        rhythm_good_coeff=float(N181_RHYTHM_GOOD_COEFF if rhythm_good_coeff is None else rhythm_good_coeff),
+        rhythm_pi_coeff=float(N181_RHYTHM_PI_COEFF if rhythm_pi_coeff is None else rhythm_pi_coeff),
+        simplify_mode=int(simplify_mode),
         scores_out=scores_out,
     )

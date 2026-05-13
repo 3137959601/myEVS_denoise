@@ -18,8 +18,9 @@ from myevs.metrics.esr import event_structural_ratio_mean_from_xy
 from myevs.timebase import TimeBase
 
 from myevs.denoise.ops.ebfopt_part2.n149_n145_s52_euclid_compactlut_backbone import score_stream_n149
+from myevs.denoise.ops.ebfopt_part2.n179_cpp_final_fast32_backbone import score_stream_n179
 
-SUPPORTED_ALGS = ("baf", "stcf", "ebf", "n149", "knoise", "evflow", "ynoise", "ts", "mlpf", "pfd")
+SUPPORTED_ALGS = ("baf", "stcf", "ebf", "n149", "n179", "knoise", "evflow", "ynoise", "ts", "mlpf", "pfd")
 
 
 @dataclass(frozen=True)
@@ -96,10 +97,18 @@ def _parse_metrics(raw: str) -> tuple[bool, bool]:
     return run_mesr, run_aocc
 
 
-def _resolve_ed24(level: str) -> InputPair:
+def _resolve_ed24(level: str, scene: str = "pedestrian") -> InputPair:
+    scene = str(scene).strip().lower()
+    if scene in ("bicycle", "bike", "mybicycle_02"):
+        root = r"D:\hjx_workspace\scientific_reserach\dataset\ED24\myBicycle_02"
+        suf = {"light": "1.8", "light_mid": "2.1", "mid": "2.5"}.get(level, "2.5")
+        noisy = os.path.join(root, f"Bicycle_02_{suf}.npy")
+        clean = os.path.join(root, f"Bicycle_02_{suf}_signal_only.npy")
+        return InputPair(clean=clean, noisy=noisy, width=346, height=260)
     root = r"D:\hjx_workspace\scientific_reserach\dataset\ED24\myPedestrain_06"
-    noisy = os.path.join(root, f"Pedestrain_06_{'1.8' if level == 'light' else ('2.5' if level == 'mid' else '3.3')}.npy")
-    clean = os.path.join(root, f"Pedestrain_06_{'1.8' if level == 'light' else ('2.5' if level == 'mid' else '3.3')}_signal_only.npy")
+    suf = {"light": "1.8", "light_mid": "2.1", "mid": "2.5", "heavy": "3.3"}.get(level, "2.5")
+    noisy = os.path.join(root, f"Pedestrain_06_{suf}.npy")
+    clean = os.path.join(root, f"Pedestrain_06_{suf}_signal_only.npy")
     return InputPair(clean=clean, noisy=noisy, width=346, height=260)
 
 
@@ -122,8 +131,12 @@ def _resolve_driving(level: str) -> InputPair:
     return InputPair(clean=clean, noisy=noisy, width=346, height=260)
 
 
-def _roc_csv_path(dataset: str, level: str, alg: str) -> str:
-    if dataset == "ed24":
+def _roc_csv_path(dataset: str, level: str, alg: str, scene: str = "pedestrian") -> str:
+    if dataset in ("ed24", "ed24_ped", "ed24_bicycle"):
+        if dataset == "ed24_bicycle" or str(scene).strip().lower() in ("bicycle", "bike", "mybicycle_02"):
+            if alg == "n149":
+                return os.path.join("data", "ED24", "myBicycle_02", "N149", f"roc_n149_{level}.csv")
+            return os.path.join("data", "ED24", "myBicycle_02", alg.upper(), f"roc_{alg}_{level}.csv")
         if alg == "n149":
             return os.path.join("data", "ED24", "myPedestrain_06", "N149", f"roc_n149_{level}.csv")
         return os.path.join("data", "ED24", "myPedestrain_06", alg.upper(), f"roc_{alg}_{level}.csv")
@@ -340,7 +353,7 @@ def _denoise_and_metrics(
     return mesr, aocc, n
 
 
-def _n149_and_metrics(
+def _score_threshold_and_metrics(
     pair: InputPair,
     cfg: OpConfig,
     threshold: float,
@@ -349,6 +362,7 @@ def _n149_and_metrics(
     run_aocc: bool,
     chunk_size: int,
     aocc_style: str,
+    scorer,
 ) -> tuple[float | None, float | None, int]:
     tb = TimeBase(tick_ns=float(tick_ns))
     t, x, y, p = _load_noisy_arrays(pair, tick_ns=float(tick_ns))
@@ -359,7 +373,7 @@ def _n149_and_metrics(
         p=p,
         label=np.zeros((t.shape[0],), dtype=np.int8),
     )
-    scores = score_stream_n149(
+    scores = scorer(
         ev,
         width=int(pair.width),
         height=int(pair.height),
@@ -393,7 +407,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description="Compute MESR/AOCC at best-AUC and best-F1 operating points from existing ROC CSV files."
     )
-    ap.add_argument("--dataset", choices=["ed24", "driving"], required=True)
+    ap.add_argument("--dataset", choices=["ed24", "ed24_ped", "ed24_bicycle", "driving"], required=True)
+    ap.add_argument("--scene", default="pedestrian", help="ed24 scene: pedestrian or bicycle")
     ap.add_argument("--algorithms", default="all", help="comma list, e.g. baf,stcf,ebf or all")
     ap.add_argument("--levels", default="all", help="comma list: light,light_mid,mid,heavy or all")
     ap.add_argument("--metrics", default="mesr,aocc", help="comma list: mesr,aocc,all,none")
@@ -420,8 +435,10 @@ def main() -> int:
         raise ValueError("--points must include best-auc and/or best-f1")
 
     if not args.out_csv:
-        if args.dataset == "ed24":
+        if args.dataset in ("ed24", "ed24_ped"):
             out_csv = os.path.join("data", "ED24", "myPedestrain_06", "bestpoint_mesr_aocc_summary.csv")
+        elif args.dataset == "ed24_bicycle":
+            out_csv = os.path.join("data", "ED24", "myBicycle_02", "bestpoint_mesr_aocc_summary.csv")
         else:
             out_csv = os.path.join("data", "DND21", "mydriving", "bestpoint_mesr_aocc_summary.csv")
     else:
@@ -433,7 +450,7 @@ def main() -> int:
 
     for alg in algs:
         for lv in levels:
-            roc_csv = _roc_csv_path(args.dataset, lv, alg)
+            roc_csv = _roc_csv_path(args.dataset, lv, alg, scene=args.scene)
             if not os.path.exists(roc_csv):
                 print(f"[skip] missing roc csv: {roc_csv}")
                 continue
@@ -443,8 +460,8 @@ def main() -> int:
                 print(f"[skip] empty roc csv: {roc_csv}")
                 continue
 
-            if args.dataset == "ed24":
-                pair = _resolve_ed24(lv)
+            if args.dataset in ("ed24", "ed24_ped", "ed24_bicycle"):
+                pair = _resolve_ed24(lv, scene=args.scene if args.dataset != "ed24_bicycle" else "bicycle")
             else:
                 pair = _resolve_driving(lv)
 
@@ -474,8 +491,9 @@ def main() -> int:
                 )
                 if key_auc not in cache:
                     t0 = time.time()
-                    if alg == "n149":
-                        cache[key_auc] = _n149_and_metrics(
+                    if alg in ("n149", "n179"):
+                        scorer = score_stream_n149 if alg == "n149" else score_stream_n179
+                        cache[key_auc] = _score_threshold_and_metrics(
                             pair=pair,
                             cfg=cfg_auc,
                             threshold=_to_float(op_auc.get("value"), 0.0),
@@ -484,6 +502,7 @@ def main() -> int:
                             run_aocc=run_aocc,
                             chunk_size=int(args.chunk_size),
                             aocc_style=args.aocc_style,
+                            scorer=scorer,
                         )
                     else:
                         cache[key_auc] = _denoise_and_metrics(
@@ -545,8 +564,9 @@ def main() -> int:
                 )
                 if key_f1 not in cache:
                     t0 = time.time()
-                    if alg == "n149":
-                        cache[key_f1] = _n149_and_metrics(
+                    if alg in ("n149", "n179"):
+                        scorer = score_stream_n149 if alg == "n149" else score_stream_n179
+                        cache[key_f1] = _score_threshold_and_metrics(
                             pair=pair,
                             cfg=cfg_f1,
                             threshold=_to_float(op_f1.get("value"), 0.0),
@@ -555,6 +575,7 @@ def main() -> int:
                             run_aocc=run_aocc,
                             chunk_size=int(args.chunk_size),
                             aocc_style=args.aocc_style,
+                            scorer=scorer,
                         )
                     else:
                         cache[key_f1] = _denoise_and_metrics(

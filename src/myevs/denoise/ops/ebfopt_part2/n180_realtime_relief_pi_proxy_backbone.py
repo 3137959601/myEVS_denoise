@@ -3,10 +3,12 @@ from __future__ import annotations
 import numpy as np
 
 from ....timebase import TimeBase
-from .n175_s52lite_rational_gate_backbone import (
+from .n180_s52lite_pi_proxy_gate_backbone import (
     N175_BETA_INIT,
+    N175_PI_BAD_COEFF,
+    N175_PI_GOOD_COEFF,
+    N175_PI_R_COEFF,
     N175_RHYTHM_GOOD_COEFF,
-    N175_RHYTHM_PI_COEFF,
     N175_RHYTHM_PRESSURE_COEFF,
     N175_SUPPORT_GOOD_COEFF,
     _score_stream_n175_core,
@@ -34,7 +36,9 @@ def score_stream_n176(
     rhythm_pressure_coeff: float | None = None,
     rhythm_good_coeff: float | None = None,
     support_good_coeff: float | None = None,
-    rhythm_pi_coeff: float | None = None,
+    pi_bad_coeff: float | None = None,
+    pi_r_coeff: float | None = None,
+    pi_good_coeff: float | None = None,
     scores_out: np.ndarray | None = None,
 ) -> np.ndarray:
     """N176: n175 with stronger support relief and weaker mix penalty.
@@ -60,6 +64,8 @@ def score_stream_n176(
         ),
         rhythm_good_coeff=float(N175_RHYTHM_GOOD_COEFF if rhythm_good_coeff is None else rhythm_good_coeff),
         support_good_coeff=float(N175_SUPPORT_GOOD_COEFF if support_good_coeff is None else support_good_coeff),
-        rhythm_pi_coeff=float(N175_RHYTHM_PI_COEFF if rhythm_pi_coeff is None else rhythm_pi_coeff),
+        pi_bad_coeff=float(N175_PI_BAD_COEFF if pi_bad_coeff is None else pi_bad_coeff),
+        pi_r_coeff=float(N175_PI_R_COEFF if pi_r_coeff is None else pi_r_coeff),
+        pi_good_coeff=float(N175_PI_GOOD_COEFF if pi_good_coeff is None else pi_good_coeff),
         scores_out=scores_out,
     )

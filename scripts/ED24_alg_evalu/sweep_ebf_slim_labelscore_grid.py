@@ -56,7 +56,7 @@ def _tau_list_tag(tau_us_list: list[int]) -> str:
     return f"tau{_join_ints(tau_us_list)}us"
 
 
-def load_labeled_npy(path: str, *, max_events: int = 0) -> LabeledEvents:
+def load_labeled_npy(path: str, *, max_events: int = 0, signal_label_value: int = 1) -> LabeledEvents:
     arr = np.load(path, mmap_mode="r", allow_pickle=True)
     if max_events > 0:
         arr = arr[:max_events]
@@ -92,7 +92,8 @@ def load_labeled_npy(path: str, *, max_events: int = 0) -> LabeledEvents:
             p = a2[:, 3].astype(np.int8, copy=False)
             label = a2[:, 4].astype(np.int8, copy=False)
 
-    label = (label > 0).astype(np.int8, copy=False)
+    sigv = int(signal_label_value)
+    label = (label.astype(np.int64, copy=False) == sigv).astype(np.int8, copy=False)
 
     return LabeledEvents(
         t=np.ascontiguousarray(t),
@@ -403,6 +404,19 @@ def _score_stream(
     env_name: str | None = None,
     n139_low: float | None = None,
     n139_high: float | None = None,
+    n179_beta_init: float | None = None,
+    n179_k_sfrac: float | None = None,
+    n179_k_mix: float | None = None,
+    n179_rhythm_pressure_coeff: float | None = None,
+    n179_rhythm_good_coeff: float | None = None,
+    n179_support_good_coeff: float | None = None,
+    n179_pi_bad_coeff: float | None = None,
+    n179_pi_r_coeff: float | None = None,
+    n179_pi_good_coeff: float | None = None,
+    n181_mode: str | None = None,
+    n182_pi_lambda: float | None = None,
+    n183_pi_source: str | None = None,
+    n184_pi_alpha: float | None = None,
 ) -> np.ndarray:
     v = str(variant).strip().lower()
     scores = np.empty((ev.t.shape[0],), dtype=np.float32)
@@ -2387,6 +2401,158 @@ def _score_stream(
             tb=tb,
             scores_out=scores,
         )
+    if v in {"n177", "ebf_n177", "ebfn177"}:
+        from myevs.denoise.ops.ebfopt_part2.n177_sparse_star_realtime_backbone import score_stream_n177
+
+        return score_stream_n177(
+            ev,
+            width=int(width),
+            height=int(height),
+            radius_px=int(radius_px),
+            tau_us=int(tau_us),
+            tb=tb,
+            scores_out=scores,
+        )
+    if v in {"n178", "ebf_n178", "ebfn178"}:
+        from myevs.denoise.ops.ebfopt_part2.n178_twostage_realtime_gate_backbone import score_stream_n178
+
+        return score_stream_n178(
+            ev,
+            width=int(width),
+            height=int(height),
+            radius_px=int(radius_px),
+            tau_us=int(tau_us),
+            tb=tb,
+            scores_out=scores,
+        )
+    if v in {"n179", "ebf_n179", "ebfn179"}:
+        from myevs.denoise.ops.ebfopt_part2.n179_cpp_final_fast32_backbone import score_stream_n179
+
+        return score_stream_n179(
+            ev,
+            width=int(width),
+            height=int(height),
+            radius_px=int(radius_px),
+            tau_us=int(tau_us),
+            tb=tb,
+            beta_init=n179_beta_init,
+            k_sfrac=n179_k_sfrac,
+            k_mix=n179_k_mix,
+            rhythm_pressure_coeff=n179_rhythm_pressure_coeff,
+            rhythm_good_coeff=n179_rhythm_good_coeff,
+            support_good_coeff=n179_support_good_coeff,
+            pi_bad_coeff=n179_pi_bad_coeff,
+            pi_r_coeff=n179_pi_r_coeff,
+            pi_good_coeff=n179_pi_good_coeff,
+            scores_out=scores,
+        )
+    if v in {"n180", "ebf_n180", "ebfn180"}:
+        from myevs.denoise.ops.ebfopt_part2.n180_cpp_pi_proxy_final_backbone import score_stream_n179
+
+        return score_stream_n179(
+            ev,
+            width=int(width),
+            height=int(height),
+            radius_px=int(radius_px),
+            tau_us=int(tau_us),
+            tb=tb,
+            beta_init=n179_beta_init,
+            k_sfrac=n179_k_sfrac,
+            k_mix=n179_k_mix,
+            rhythm_pressure_coeff=n179_rhythm_pressure_coeff,
+            rhythm_good_coeff=n179_rhythm_good_coeff,
+            support_good_coeff=n179_support_good_coeff,
+            pi_bad_coeff=n179_pi_bad_coeff,
+            pi_r_coeff=n179_pi_r_coeff,
+            pi_good_coeff=n179_pi_good_coeff,
+            scores_out=scores,
+        )
+    if v in {"n181", "ebf_n181", "ebfn181"}:
+        from myevs.denoise.ops.ebfopt_part2.n181_simplified_n179_backbone import score_stream_n181
+
+        return score_stream_n181(
+            ev,
+            width=int(width),
+            height=int(height),
+            radius_px=int(radius_px),
+            tau_us=int(tau_us),
+            tb=tb,
+            beta_init=n179_beta_init,
+            k_sfrac=n179_k_sfrac,
+            rhythm_good_coeff=n179_rhythm_good_coeff,
+            mode=("conservative" if n181_mode is None else str(n181_mode)),
+            scores_out=scores,
+        )
+    if v in {"n182", "ebf_n182", "ebfn182"}:
+        from myevs.denoise.ops.ebfopt_part2.n182_pi_restored_simplified_backbone import score_stream_n182
+
+        return score_stream_n182(
+            ev,
+            width=int(width),
+            height=int(height),
+            radius_px=int(radius_px),
+            tau_us=int(tau_us),
+            tb=tb,
+            beta_init=n179_beta_init,
+            k_sfrac=n179_k_sfrac,
+            rhythm_good_coeff=n179_rhythm_good_coeff,
+            pi_lambda=(0.25 if n182_pi_lambda is None else float(n182_pi_lambda)),
+            mode=("conservative" if n181_mode is None else str(n181_mode)),
+            scores_out=scores,
+        )
+    if v in {"n183", "ebf_n183", "ebfn183"}:
+        from myevs.denoise.ops.ebfopt_part2.n183_pi_source_ablation_backbone import score_stream_n183
+
+        return score_stream_n183(
+            ev,
+            width=int(width),
+            height=int(height),
+            radius_px=int(radius_px),
+            tau_us=int(tau_us),
+            tb=tb,
+            beta_init=n179_beta_init,
+            k_sfrac=n179_k_sfrac,
+            rhythm_good_coeff=n179_rhythm_good_coeff,
+            pi_lambda=(0.5 if n182_pi_lambda is None else float(n182_pi_lambda)),
+            pi_source=("avg" if n183_pi_source is None else str(n183_pi_source)),
+            mode=("conservative" if n181_mode is None else str(n181_mode)),
+            scores_out=scores,
+        )
+    if v in {"n184", "ebf_n184", "ebfn184"}:
+        from myevs.denoise.ops.ebfopt_part2.n184_n179_pi_alpha_rg_sweep_backbone import score_stream_n184
+
+        return score_stream_n184(
+            ev,
+            width=int(width),
+            height=int(height),
+            radius_px=int(radius_px),
+            tau_us=int(tau_us),
+            tb=tb,
+            beta_init=n179_beta_init,
+            k_sfrac=n179_k_sfrac,
+            k_mix=n179_k_mix,
+            rhythm_pressure_coeff=n179_rhythm_pressure_coeff,
+            rhythm_good_coeff=n179_rhythm_good_coeff,
+            support_good_coeff=n179_support_good_coeff,
+            pi_alpha=(0.5 if n184_pi_alpha is None else float(n184_pi_alpha)),
+            scores_out=scores,
+        )
+    if v in {"n185", "ebf_n185", "ebfn185"}:
+        from myevs.denoise.ops.ebfopt_part2.n185_n181_alpha_rg_backbone import score_stream_n185
+
+        return score_stream_n185(
+            ev,
+            width=int(width),
+            height=int(height),
+            radius_px=int(radius_px),
+            tau_us=int(tau_us),
+            tb=tb,
+            beta_init=n179_beta_init,
+            k_sfrac=n179_k_sfrac,
+            rhythm_good_coeff=n179_rhythm_good_coeff,
+            alpha=(0.5 if n184_pi_alpha is None else float(n184_pi_alpha)),
+            scores_out=scores,
+        )
     if v in {"n107", "ebf_n107", "ebfn107"}:
         from myevs.denoise.ops.ebfopt_part2.n107_projected_energy_backbone import score_stream_n107
 
@@ -2401,7 +2567,7 @@ def _score_stream(
         )
 
     raise SystemExit(
-        f"unknown variant: {variant!r}. supported: ebf | s52 | s55 | s60 | s61 | s62 | s63 | s64 | s65 | s66 | s67 | s68 | s69 | s70 | s71 | s72 | s73 | s74 | s75 | s76 | s77 | s78 | s79 | s80 | s81 | s82 | s83 | s84 | s85 | s86 | s87 | n1 | n2 | n3 | n4 | n5 | n6 | n7 | n71 | n72 | n8 | n81 | n82 | n83 | n84 | n85 | n86 | n87 | n88 | n89 | n90 | n91 | n92 | n93 | n94 | n95 | n96 | n97 | n98 | n99 | n100 | n101 | n102 | n103 | n104 | n105 | n106 | n107 | n108 | n109 | n110 | n111 | n112 | n113 | n114 | n116 | n117 | n118 | n120 | n121 | n123 | n124 | n125 | n126 | n127 | n128 | n129 | n131 | n132 | n133 | n134 | n135 | n137 | n139 | n140 | n141 | n142 | n143 | n144 | n145 | n146 | n147 | n148 | n149 | n150 | n151 | n152 | n153 | n160 | n161 | n162 | n170 | n171 | n172 | n173 | n174 | n175 | n176"
+        f"unknown variant: {variant!r}. supported: ebf | s52 | s55 | s60 | s61 | s62 | s63 | s64 | s65 | s66 | s67 | s68 | s69 | s70 | s71 | s72 | s73 | s74 | s75 | s76 | s77 | s78 | s79 | s80 | s81 | s82 | s83 | s84 | s85 | s86 | s87 | n1 | n2 | n3 | n4 | n5 | n6 | n7 | n71 | n72 | n8 | n81 | n82 | n83 | n84 | n85 | n86 | n87 | n88 | n89 | n90 | n91 | n92 | n93 | n94 | n95 | n96 | n97 | n98 | n99 | n100 | n101 | n102 | n103 | n104 | n105 | n106 | n107 | n108 | n109 | n110 | n111 | n112 | n113 | n114 | n116 | n117 | n118 | n120 | n121 | n123 | n124 | n125 | n126 | n127 | n128 | n129 | n131 | n132 | n133 | n134 | n135 | n137 | n139 | n140 | n141 | n142 | n143 | n144 | n145 | n146 | n147 | n148 | n149 | n150 | n151 | n152 | n153 | n160 | n161 | n162 | n170 | n171 | n172 | n173 | n174 | n175 | n176 | n177 | n178 | n179 | n180 | n181 | n182 | n183 | n184 | n185"
     )
 
 
@@ -2415,6 +2581,19 @@ def score_stream_ebf(
     tb: TimeBase,
     _kernel_cache: dict[str, object] | None = None,
     variant: str = "ebf",
+    n179_beta_init: float | None = None,
+    n179_k_sfrac: float | None = None,
+    n179_k_mix: float | None = None,
+    n179_rhythm_pressure_coeff: float | None = None,
+    n179_rhythm_good_coeff: float | None = None,
+    n179_support_good_coeff: float | None = None,
+    n179_pi_bad_coeff: float | None = None,
+    n179_pi_r_coeff: float | None = None,
+    n179_pi_good_coeff: float | None = None,
+    n181_mode: str | None = None,
+    n182_pi_lambda: float | None = None,
+    n183_pi_source: str | None = None,
+    n184_pi_alpha: float | None = None,
 ) -> np.ndarray:
     """Public scoring entry for compatibility with downstream analysis.
 
@@ -2434,6 +2613,19 @@ def score_stream_ebf(
         variant=str(variant),
         kernel_cache=kernel_cache,
         env_name=None,
+        n179_beta_init=n179_beta_init,
+        n179_k_sfrac=n179_k_sfrac,
+        n179_k_mix=n179_k_mix,
+        n179_rhythm_pressure_coeff=n179_rhythm_pressure_coeff,
+        n179_rhythm_good_coeff=n179_rhythm_good_coeff,
+        n179_support_good_coeff=n179_support_good_coeff,
+        n179_pi_bad_coeff=n179_pi_bad_coeff,
+        n179_pi_r_coeff=n179_pi_r_coeff,
+        n179_pi_good_coeff=n179_pi_good_coeff,
+        n181_mode=n181_mode,
+        n182_pi_lambda=n182_pi_lambda,
+        n183_pi_source=n183_pi_source,
+        n184_pi_alpha=n184_pi_alpha,
     )
 
 
@@ -2442,7 +2634,7 @@ def main() -> int:
     ap.add_argument(
         "--variant",
         default="ebf",
-        help="ebf | s52 | s55 | s60 | s61 | s62 | s63 | s64 | s65 | s66 | s67 | s68 | s69 | s70 | s71 | s72 | s73 | s74 | s75 | s76 | s77 | s78 | s79 | s80 | s81 | s82 | s83 | s84 | s85 | s86 | s87 | n1 | n2 | n3 | n4 | n5 | n6 | n7 | n71 | n72 | n8 | n81 | n82 | n83 | n84 | n85 | n86 | n87 | n88 | n89 | n90 | n91 | n92 | n93 | n94 | n95 | n96 | n97 | n98 | n99 | n100 | n101 | n102 | n103 | n104 | n105 | n106 | n107 | n108 | n109 | n110 | n111 | n112 | n113 | n114 | n116 | n117 | n118 | n120 | n121 | n123 | n124 | n125 | n126 | n127 | n128 | n129 | n131 | n132 | n133 | n134 | n135 | n137 | n139 | n140 | n141 | n142 | n143 | n144 | n145 | n146 | n147 | n148 | n149 | n150 | n151 | n152 | n153 | n160 | n161 | n162 | n170 | n171 | n172 | n173 | n174 | n175 | n176",
+        help="ebf | s52 | s55 | s60 | s61 | s62 | s63 | s64 | s65 | s66 | s67 | s68 | s69 | s70 | s71 | s72 | s73 | s74 | s75 | s76 | s77 | s78 | s79 | s80 | s81 | s82 | s83 | s84 | s85 | s86 | s87 | n1 | n2 | n3 | n4 | n5 | n6 | n7 | n71 | n72 | n8 | n81 | n82 | n83 | n84 | n85 | n86 | n87 | n88 | n89 | n90 | n91 | n92 | n93 | n94 | n95 | n96 | n97 | n98 | n99 | n100 | n101 | n102 | n103 | n104 | n105 | n106 | n107 | n108 | n109 | n110 | n111 | n112 | n113 | n114 | n116 | n117 | n118 | n120 | n121 | n123 | n124 | n125 | n126 | n127 | n128 | n129 | n131 | n132 | n133 | n134 | n135 | n137 | n139 | n140 | n141 | n142 | n143 | n144 | n145 | n146 | n147 | n148 | n149 | n150 | n151 | n152 | n153 | n160 | n161 | n162 | n170 | n171 | n172 | n173 | n174 | n175 | n176 | n177 | n178 | n179 | n180 | n181 | n182 | n183",
     )
     ap.add_argument("--max-events", type=int, default=int(os.environ.get("EBF_MAX_EVENTS", "0")), help="0=all")
     ap.add_argument("--out-dir", default="data/ED24/myPedestrain_06/EBF_Part2/_slim", help="output directory")
@@ -2464,6 +2656,48 @@ def main() -> int:
         help="for n139 only: high-threshold grid",
     )
     ap.add_argument("--roc-max-points", type=int, default=5000)
+    ap.add_argument(
+        "--signal-label-value",
+        type=int,
+        default=1,
+        help="value in input label column that means signal(positive class); 1 for ED24/Driving/LED, 0 for DVSCLEAN",
+    )
+    ap.add_argument(
+        "--n179-k-sfrac-list",
+        default="0.4",
+        help="for n179 only: comma-separated k_sfrac values, e.g. 0.4,0.67,0.8,0.9",
+    )
+    ap.add_argument(
+        "--n179-k-mix-list",
+        default="0.0",
+        help="for n179 only: comma-separated k_mix values, e.g. 0.0,0.08,0.125,0.16",
+    )
+    ap.add_argument(
+        "--n179-beta-init-list",
+        default="",
+        help="for n179 only: optional comma-separated beta_init values; empty means use model default",
+    )
+    ap.add_argument(
+        "--n179-rhythm-pressure-coeff-list",
+        default="0.0",
+        help="for n179 ablation only: coefficient applied to rhythm_pressure in alpha_eff",
+    )
+    ap.add_argument(
+        "--n179-rhythm-good-coeff-list",
+        default="0.75",
+        help="for n179 ablation only: coefficient applied to rhythm_good in rhythm_scale",
+    )
+    ap.add_argument(
+        "--n179-support-good-coeff-list",
+        default="0.0",
+        help="for n179 ablation only: coefficient applied to rhythm_good in support_scale",
+    )
+    ap.add_argument("--n179-pi-bad-coeff-list", default="0.5")
+    ap.add_argument("--n179-pi-r-coeff-list", default="0.5")
+    ap.add_argument("--n179-pi-good-coeff-list", default="0.75")
+    ap.add_argument("--n181-mode-list", default="conservative,minimal")
+    ap.add_argument("--n182-pi-lambda-list", default="0.25,0.5")
+    ap.add_argument("--n183-pi-source-list", default="bad,r,avg,max,mix")
 
     ap.add_argument(
         "--esr-mode",
@@ -2509,6 +2743,18 @@ def main() -> int:
     tau_us_list = _parse_int_list(args.tau_us_list)
     n139_low_list = _parse_float_list(args.n139_low_list)
     n139_high_list = _parse_float_list(args.n139_high_list)
+    n179_k_sfrac_list = _parse_float_list(args.n179_k_sfrac_list)
+    n179_k_mix_list = _parse_float_list(args.n179_k_mix_list)
+    n179_beta_init_list = _parse_float_list(args.n179_beta_init_list) if str(args.n179_beta_init_list).strip() else []
+    n179_rhythm_pressure_coeff_list = _parse_float_list(args.n179_rhythm_pressure_coeff_list)
+    n179_rhythm_good_coeff_list = _parse_float_list(args.n179_rhythm_good_coeff_list)
+    n179_support_good_coeff_list = _parse_float_list(args.n179_support_good_coeff_list)
+    n179_pi_bad_coeff_list = _parse_float_list(args.n179_pi_bad_coeff_list)
+    n179_pi_r_coeff_list = _parse_float_list(args.n179_pi_r_coeff_list)
+    n179_pi_good_coeff_list = _parse_float_list(args.n179_pi_good_coeff_list)
+    n181_mode_list = [x.strip() for x in str(args.n181_mode_list).split(",") if x.strip()]
+    n182_pi_lambda_list = _parse_float_list(args.n182_pi_lambda_list)
+    n183_pi_source_list = [x.strip() for x in str(args.n183_pi_source_list).split(",") if x.strip()]
 
     env_inputs = {"light": str(args.light), "mid": str(args.mid), "heavy": str(args.heavy)}
 
@@ -2864,12 +3110,33 @@ def main() -> int:
     elif v in {"n176", "ebf_n176", "ebfn176"}:
         roc_prefix = "roc_ebf_n176"
         tag_prefix = "ebf_n176"
+    elif v in {"n177", "ebf_n177", "ebfn177"}:
+        roc_prefix = "roc_ebf_n177"
+        tag_prefix = "ebf_n177"
+    elif v in {"n178", "ebf_n178", "ebfn178"}:
+        roc_prefix = "roc_ebf_n178"
+        tag_prefix = "ebf_n178"
+    elif v in {"n179", "ebf_n179", "ebfn179"}:
+        roc_prefix = "roc_ebf_n179"
+        tag_prefix = "ebf_n179"
+    elif v in {"n180", "ebf_n180", "ebfn180"}:
+        roc_prefix = "roc_ebf_n180"
+        tag_prefix = "ebf_n180"
+    elif v in {"n181", "ebf_n181", "ebfn181"}:
+        roc_prefix = "roc_ebf_n181"
+        tag_prefix = "ebf_n181"
+    elif v in {"n182", "ebf_n182", "ebfn182"}:
+        roc_prefix = "roc_ebf_n182"
+        tag_prefix = "ebf_n182"
+    elif v in {"n183", "ebf_n183", "ebfn183"}:
+        roc_prefix = "roc_ebf_n183"
+        tag_prefix = "ebf_n183"
     elif v in {"n107", "ebf_n107", "ebfn107"}:
         roc_prefix = "roc_ebf_n107"
         tag_prefix = "ebf_n107"
     else:
         raise SystemExit(
-            f"unknown --variant: {args.variant!r}. choices: ebf | s52 | s55 | s60 | s61 | s62 | s63 | s64 | s65 | s66 | s67 | s68 | s69 | s70 | s71 | s72 | s73 | s74 | s75 | s76 | s77 | s78 | s79 | s80 | s81 | s82 | s83 | s84 | s85 | s86 | s87 | n1 | n2 | n3 | n4 | n5 | n6 | n7 | n71 | n72 | n8 | n81 | n82 | n83 | n84 | n85 | n86 | n87 | n88 | n89 | n90 | n91 | n92 | n93 | n94 | n95 | n96 | n97 | n98 | n99 | n100 | n101 | n102 | n103 | n104 | n105 | n106 | n107 | n108 | n109 | n110 | n111 | n112 | n113 | n114 | n116 | n117 | n118 | n120 | n121 | n123 | n124 | n125 | n126 | n127 | n128 | n129 | n131 | n132 | n133 | n134 | n135 | n137 | n139 | n140 | n141 | n142 | n143 | n144 | n145 | n146 | n147 | n148 | n149 | n150 | n151 | n152 | n153 | n160 | n161 | n162 | n170 | n171 | n172 | n173 | n174 | n175 | n176"
+            f"unknown --variant: {args.variant!r}. choices: ebf | s52 | s55 | s60 | s61 | s62 | s63 | s64 | s65 | s66 | s67 | s68 | s69 | s70 | s71 | s72 | s73 | s74 | s75 | s76 | s77 | s78 | s79 | s80 | s81 | s82 | s83 | s84 | s85 | s86 | s87 | n1 | n2 | n3 | n4 | n5 | n6 | n7 | n71 | n72 | n8 | n81 | n82 | n83 | n84 | n85 | n86 | n87 | n88 | n89 | n90 | n91 | n92 | n93 | n94 | n95 | n96 | n97 | n98 | n99 | n100 | n101 | n102 | n103 | n104 | n105 | n106 | n107 | n108 | n109 | n110 | n111 | n112 | n113 | n114 | n116 | n117 | n118 | n120 | n121 | n123 | n124 | n125 | n126 | n127 | n128 | n129 | n131 | n132 | n133 | n134 | n135 | n137 | n139 | n140 | n141 | n142 | n143 | n144 | n145 | n146 | n147 | n148 | n149 | n150 | n151 | n152 | n153 | n160 | n161 | n162 | n170 | n171 | n172 | n173 | n174 | n175 | n176 | n177 | n178 | n179 | n180 | n181 | n182 | n183"
         )
 
     out_dir = str(args.out_dir)
@@ -2894,7 +3161,11 @@ def main() -> int:
     n139_records: dict[str, list[dict[str, float | int | str]]] = {"light": [], "mid": [], "heavy": []}
 
     for env, in_path in env_inputs.items():
-        ev = load_labeled_npy(in_path, max_events=int(args.max_events))
+        ev = load_labeled_npy(
+            in_path,
+            max_events=int(args.max_events),
+            signal_label_value=int(args.signal_label_value),
+        )
         n = int(ev.label.shape[0])
         pos = int(np.sum(ev.label))
         neg = int(n - pos)
@@ -2910,22 +3181,197 @@ def main() -> int:
                 r = int((int(s) - 1) // 2)
                 for tau_us in tau_us_list:
                     if v in {"n139", "ebf_n139", "ebfn139"}:
-                        low_high_pairs: list[tuple[float, float]] = []
+                        run_param_sets: list[dict[str, float | None]] = []
                         for lo in n139_low_list:
                             for hi in n139_high_list:
                                 if float(lo) >= float(hi):
                                     continue
-                                low_high_pairs.append((float(lo), float(hi)))
-                        if not low_high_pairs:
+                                run_param_sets.append(
+                                    {
+                                        "n139_low": float(lo),
+                                        "n139_high": float(hi),
+                                        "n179_k_sfrac": None,
+                                        "n179_k_mix": None,
+                                        "n179_beta_init": None,
+                                        "n179_rhythm_pressure_coeff": None,
+                                        "n179_rhythm_good_coeff": None,
+                                        "n179_support_good_coeff": None,
+                                        "n179_pi_bad_coeff": None,
+                                        "n179_pi_r_coeff": None,
+                                        "n179_pi_good_coeff": None,
+                                        "n181_mode": None,
+                                        "n182_pi_lambda": None,
+                                        "n183_pi_source": None,
+                                    }
+                                )
+                        if not run_param_sets:
                             raise SystemExit("n139 requires at least one valid pair where low < high")
+                    elif v in {"n179", "ebf_n179", "ebfn179", "n180", "ebf_n180", "ebfn180"}:
+                        if not n179_k_sfrac_list or not n179_k_mix_list:
+                            raise SystemExit(f"{v} requires non-empty --n179-k-sfrac-list and --n179-k-mix-list")
+                        beta_vals = n179_beta_init_list if n179_beta_init_list else [None]
+                        run_param_sets = []
+                        for ks in n179_k_sfrac_list:
+                            for km in n179_k_mix_list:
+                                for b0 in beta_vals:
+                                    for rp in n179_rhythm_pressure_coeff_list:
+                                        for rg in n179_rhythm_good_coeff_list:
+                                            for sg in n179_support_good_coeff_list:
+                                                for pbad in n179_pi_bad_coeff_list:
+                                                    for pr in n179_pi_r_coeff_list:
+                                                        for pgood in n179_pi_good_coeff_list:
+                                                            run_param_sets.append(
+                                                                {
+                                                                    "n139_low": None,
+                                                                    "n139_high": None,
+                                                                    "n179_k_sfrac": float(ks),
+                                                                    "n179_k_mix": float(km),
+                                                                    "n179_beta_init": (None if b0 is None else float(b0)),
+                                                                    "n179_rhythm_pressure_coeff": float(rp),
+                                                                    "n179_rhythm_good_coeff": float(rg),
+                                                                    "n179_support_good_coeff": float(sg),
+                                                                    "n179_pi_bad_coeff": float(pbad),
+                                                                    "n179_pi_r_coeff": float(pr),
+                                                                    "n179_pi_good_coeff": float(pgood),
+                                                                    "n181_mode": None,
+                                                                    "n182_pi_lambda": None,
+                                                                    "n183_pi_source": None,
+                                                                }
+                                                            )
+                    elif v in {"n181", "ebf_n181", "ebfn181", "n182", "ebf_n182", "ebfn182"}:
+                        if not n179_k_sfrac_list:
+                            raise SystemExit(f"{v} requires non-empty --n179-k-sfrac-list")
+                        beta_vals = n179_beta_init_list if n179_beta_init_list else [None]
+                        run_param_sets = []
+                        for mode in n181_mode_list:
+                            for ks in n179_k_sfrac_list:
+                                for b0 in beta_vals:
+                                    for rg in n179_rhythm_good_coeff_list:
+                                        lambda_vals = n182_pi_lambda_list if v in {"n182", "ebf_n182", "ebfn182"} else [None]
+                                        for lpi in lambda_vals:
+                                            run_param_sets.append(
+                                                {
+                                                    "n139_low": None,
+                                                    "n139_high": None,
+                                                    "n179_k_sfrac": float(ks),
+                                                    "n179_k_mix": 0.0,
+                                                    "n179_beta_init": (None if b0 is None else float(b0)),
+                                                    "n179_rhythm_pressure_coeff": 0.0,
+                                                    "n179_rhythm_good_coeff": float(rg),
+                                                    "n179_support_good_coeff": 0.0,
+                                                    "n179_pi_bad_coeff": None,
+                                                    "n179_pi_r_coeff": None,
+                                                    "n179_pi_good_coeff": None,
+                                                    "n181_mode": str(mode),
+                                                    "n182_pi_lambda": (None if lpi is None else float(lpi)),
+                                                    "n183_pi_source": None,
+                                                }
+                                            )
+                    elif v in {"n183", "ebf_n183", "ebfn183"}:
+                        if not n179_k_sfrac_list:
+                            raise SystemExit(f"{v} requires non-empty --n179-k-sfrac-list")
+                        beta_vals = n179_beta_init_list if n179_beta_init_list else [None]
+                        run_param_sets = []
+                        for src in n183_pi_source_list:
+                            for mode in n181_mode_list:
+                                for ks in n179_k_sfrac_list:
+                                    for b0 in beta_vals:
+                                        for rg in n179_rhythm_good_coeff_list:
+                                            for lpi in n182_pi_lambda_list:
+                                                run_param_sets.append(
+                                                    {
+                                                        "n139_low": None,
+                                                        "n139_high": None,
+                                                        "n179_k_sfrac": float(ks),
+                                                        "n179_k_mix": 0.0,
+                                                        "n179_beta_init": (None if b0 is None else float(b0)),
+                                                        "n179_rhythm_pressure_coeff": 0.0,
+                                                        "n179_rhythm_good_coeff": float(rg),
+                                                        "n179_support_good_coeff": 0.0,
+                                                        "n179_pi_bad_coeff": None,
+                                                        "n179_pi_r_coeff": None,
+                                                        "n179_pi_good_coeff": None,
+                                                        "n181_mode": str(mode),
+                                                        "n182_pi_lambda": float(lpi),
+                                                        "n183_pi_source": str(src),
+                                                    }
+                                                )
                     else:
-                        low_high_pairs = [(float("nan"), float("nan"))]
+                        run_param_sets = [
+                            {
+                                "n139_low": None,
+                                "n139_high": None,
+                                "n179_k_sfrac": None,
+                                "n179_k_mix": None,
+                                "n179_beta_init": None,
+                                "n179_rhythm_pressure_coeff": None,
+                                "n179_rhythm_good_coeff": None,
+                                "n179_support_good_coeff": None,
+                                "n179_pi_bad_coeff": None,
+                                "n179_pi_r_coeff": None,
+                                "n179_pi_good_coeff": None,
+                                "n181_mode": None,
+                                "n182_pi_lambda": None,
+                                "n183_pi_source": None,
+                            }
+                        ]
 
-                    for n139_lo, n139_hi in low_high_pairs:
+                    for param_set in run_param_sets:
+                        n139_lo = param_set["n139_low"]
+                        n139_hi = param_set["n139_high"]
+                        n179_ks = param_set["n179_k_sfrac"]
+                        n179_km = param_set["n179_k_mix"]
+                        n179_b0 = param_set["n179_beta_init"]
+                        n179_rp = param_set["n179_rhythm_pressure_coeff"]
+                        n179_rg = param_set["n179_rhythm_good_coeff"]
+                        n179_sg = param_set["n179_support_good_coeff"]
+                        n179_pbad = param_set["n179_pi_bad_coeff"]
+                        n179_pr = param_set["n179_pi_r_coeff"]
+                        n179_pgood = param_set["n179_pi_good_coeff"]
+                        n181_mode = param_set["n181_mode"]
+                        n182_lpi = param_set["n182_pi_lambda"]
+                        n183_src = param_set["n183_pi_source"]
+
                         if v in {"n139", "ebf_n139", "ebfn139"}:
                             tag = (
                                 f"{tag_prefix}_labelscore_s{int(s)}_tau{int(tau_us)}"
-                                f"_l{_float_tag(n139_lo)}_h{_float_tag(n139_hi)}"
+                                f"_l{_float_tag(float(n139_lo))}_h{_float_tag(float(n139_hi))}"
+                            )
+                        elif v in {"n179", "ebf_n179", "ebfn179", "n180", "ebf_n180", "ebfn180"}:
+                            tag = (
+                                f"{tag_prefix}_labelscore_s{int(s)}_tau{int(tau_us)}"
+                                f"_ks{_float_tag(float(n179_ks))}"
+                                f"_km{_float_tag(float(n179_km))}"
+                                f"_rp{_float_tag(float(n179_rp))}"
+                                f"_rg{_float_tag(float(n179_rg))}"
+                                f"_sg{_float_tag(float(n179_sg))}"
+                                f"_pb{_float_tag(float(n179_pbad))}"
+                                f"_pr{_float_tag(float(n179_pr))}"
+                                f"_pg{_float_tag(float(n179_pgood))}"
+                                f"{'' if n179_b0 is None else f'_b{_float_tag(float(n179_b0))}'}"
+                            )
+                        elif v in {"n181", "ebf_n181", "ebfn181"}:
+                            tag = (
+                                f"{tag_prefix}_{str(n181_mode)}_labelscore_s{int(s)}_tau{int(tau_us)}"
+                                f"_ks{_float_tag(float(n179_ks))}"
+                                f"_rg{_float_tag(float(n179_rg))}"
+                                f"{'' if n179_b0 is None else f'_b{_float_tag(float(n179_b0))}'}"
+                            )
+                        elif v in {"n182", "ebf_n182", "ebfn182"}:
+                            tag = (
+                                f"{tag_prefix}_{str(n181_mode)}_labelscore_s{int(s)}_tau{int(tau_us)}"
+                                f"_ks{_float_tag(float(n179_ks))}"
+                                f"_rg{_float_tag(float(n179_rg))}"
+                                f"_lp{_float_tag(float(n182_lpi))}"
+                                f"{'' if n179_b0 is None else f'_b{_float_tag(float(n179_b0))}'}"
+                            )
+                        elif v in {"n183", "ebf_n183", "ebfn183"}:
+                            tag = (
+                                f"{tag_prefix}_{str(n181_mode)}_{str(n183_src)}_labelscore_s{int(s)}_tau{int(tau_us)}"
+                                f"_ks{_float_tag(float(n179_ks))}"
+                                f"_rg{_float_tag(float(n179_rg))}"
+                                f"_lp{_float_tag(float(n182_lpi))}"
+                                f"{'' if n179_b0 is None else f'_b{_float_tag(float(n179_b0))}'}"
                             )
                         else:
                             tag = f"{tag_prefix}_labelscore_s{int(s)}_tau{int(tau_us)}"
@@ -2940,8 +3386,20 @@ def main() -> int:
                             variant=str(args.variant),
                             kernel_cache=kernel_cache,
                             env_name=str(env),
-                            n139_low=(None if np.isnan(n139_lo) else float(n139_lo)),
-                            n139_high=(None if np.isnan(n139_hi) else float(n139_hi)),
+                            n139_low=(None if n139_lo is None else float(n139_lo)),
+                            n139_high=(None if n139_hi is None else float(n139_hi)),
+                            n179_k_sfrac=(None if n179_ks is None else float(n179_ks)),
+                            n179_k_mix=(None if n179_km is None else float(n179_km)),
+                            n179_beta_init=(None if n179_b0 is None else float(n179_b0)),
+                            n179_rhythm_pressure_coeff=(None if n179_rp is None else float(n179_rp)),
+                            n179_rhythm_good_coeff=(None if n179_rg is None else float(n179_rg)),
+                            n179_support_good_coeff=(None if n179_sg is None else float(n179_sg)),
+                            n179_pi_bad_coeff=(None if n179_pbad is None else float(n179_pbad)),
+                            n179_pi_r_coeff=(None if n179_pr is None else float(n179_pr)),
+                            n179_pi_good_coeff=(None if n179_pgood is None else float(n179_pgood)),
+                            n181_mode=(None if n181_mode is None else str(n181_mode)),
+                            n182_pi_lambda=(None if n182_lpi is None else float(n182_lpi)),
+                            n183_pi_source=(None if n183_src is None else str(n183_src)),
                         )
 
                         auc, thr, tp, fp, _fpr, _tpr = _roc_points_from_scores(
@@ -2991,8 +3449,8 @@ def main() -> int:
                                     "s": int(s),
                                     "r": int(r),
                                     "tau_us": int(tau_us),
-                                    "n139_low": (None if np.isnan(n139_lo) else float(n139_lo)),
-                                    "n139_high": (None if np.isnan(n139_hi) else float(n139_hi)),
+                                    "n139_low": (None if n139_lo is None else float(n139_lo)),
+                                    "n139_high": (None if n139_hi is None else float(n139_hi)),
                                 }
                             if best_f1_recipe is None or float(best_f1) > float(best_f1_recipe["f1"]):
                                 best_f1_recipe = {
@@ -3003,8 +3461,8 @@ def main() -> int:
                                     "s": int(s),
                                     "r": int(r),
                                     "tau_us": int(tau_us),
-                                    "n139_low": (None if np.isnan(n139_lo) else float(n139_lo)),
-                                    "n139_high": (None if np.isnan(n139_hi) else float(n139_hi)),
+                                    "n139_low": (None if n139_lo is None else float(n139_lo)),
+                                    "n139_high": (None if n139_hi is None else float(n139_hi)),
                                 }
 
                         esr_mean: float | None = None
