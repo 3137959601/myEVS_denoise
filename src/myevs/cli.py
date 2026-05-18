@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import os
@@ -835,7 +835,7 @@ def build_parser() -> argparse.ArgumentParser:
             "9 fastdecay (dv-processing FastDecayNoiseFilter; --time-us=half-life, --radius-px=subdivision, --min-neighbors=threshold), "
             "10 ebf (Guo 2025; --time-us=tau, --radius-px=radius (TI25 uses 2), --min-neighbors=score-threshold), "
             "11 ebf_optimized (research; global adaptive noise normalization; --min-neighbors=normalized-threshold), "
-            "12 knoise, 13 evflow, 14 ynoise, 15 ts, 16 mlpf, 17 pfd, 18 n149"
+            "12 knoise, 13 evflow, 14 ynoise, 15 ts, 16 mlpf, 17 pfd, 18 n149, 19 stcf_original"
         ),
     )
     p_den.add_argument(
@@ -850,7 +850,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--engine",
         choices=["python", "numba", "cpp"],
         default="python",
-        help="execution engine (cpp accelerates stc / baf / ebf / n149 / knoise / ynoise / ts / evflow; numba accelerates stc / ts / evflow / pfd for single-method runs)",
+        help="execution engine (cpp accelerates stc / baf / ebf / n149 / knoise / ynoise / ts / evflow / mlpf / pfd; numba accelerates stc / ts / evflow / pfd for single-method runs)",
     )
     p_den.add_argument(
         "--tick-ns",
@@ -862,7 +862,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_den.add_argument("--radius-px", type=int, default=1, help="spatial radius (px), for stc/baf")
     p_den.add_argument("--min-neighbors", type=float, default=2, help="threshold/limit (meaning depends on method)")
     p_den.add_argument("--refractory-us", type=int, default=50, help="refractory/mask/hold time (us)")
-    p_den.add_argument("--mlpf-model", default="", help="optional TorchScript model path for method=mlpf")
+    p_den.add_argument("--mlpf-model", default="", help="optional TorchScript .pt or exported .npz model path for method=mlpf")
     p_den.add_argument("--mlpf-patch", type=int, default=7, help="mlpf patch size (odd, e.g. 7/9/11)")
     p_den.add_argument("--pfd-mode", choices=["a", "b", "A", "B"], default="a", help="pfd mode: a (default) or b")
     p_den.add_argument("--hide-on", action="store_true", help="hide ON events")
@@ -928,7 +928,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_view.add_argument(
         "--rotate-180",
         action="store_true",
-        help="rotate by 180° (equivalent to --flip-x --flip-y)",
+        help="rotate by 180掳 (equivalent to --flip-x --flip-y)",
     )
     p_view.add_argument(
         "--no-hold",
@@ -1017,7 +1017,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Qt method id/name: 0 none, 1 stc, 2 refractory, 3 hotpixel, 4 baf, "
             "5 combo(stc+refractory), 6 ratelimit, 7 globalgate, 8 dp, "
-            "9 fastdecay, 10 ebf, 11 ebf_optimized, 12 knoise, 13 evflow, 14 ynoise, 15 ts, 16 mlpf, 17 pfd, 18 n149"
+            "9 fastdecay, 10 ebf, 11 ebf_optimized, 12 knoise, 13 evflow, 14 ynoise, 15 ts, 16 mlpf, 17 pfd, 18 n149, 19 stcf_original"
         ),
     )
     p_sw.add_argument(
@@ -1030,7 +1030,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--engine",
         choices=["python", "numba", "cpp"],
         default="python",
-        help="execution engine (cpp accelerates stc / baf / ebf / n149 / knoise / ynoise / ts / evflow; numba accelerates stc / ts / evflow / pfd for single-method runs)",
+        help="execution engine (cpp accelerates stc / baf / ebf / n149 / knoise / ynoise / ts / evflow / mlpf / pfd; numba accelerates stc / ts / evflow / pfd for single-method runs)",
     )
     p_sw.add_argument("--values", required=True, help="comma-separated values, e.g. 5,10,20,50")
     p_sw.add_argument("--tick-ns", type=float, default=12.5)
@@ -1038,7 +1038,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_sw.add_argument("--radius-px", type=int, default=1)
     p_sw.add_argument("--min-neighbors", type=float, default=2)
     p_sw.add_argument("--refractory-us", type=int, default=50)
-    p_sw.add_argument("--mlpf-model", default="", help="optional TorchScript model path for method=mlpf")
+    p_sw.add_argument("--mlpf-model", default="", help="optional TorchScript .pt or exported .npz model path for method=mlpf")
     p_sw.add_argument("--mlpf-patch", type=int, default=7, help="mlpf patch size (odd, e.g. 7/9/11)")
     p_sw.add_argument("--pfd-mode", choices=["a", "b", "A", "B"], default="a", help="pfd mode: a (default) or b")
     p_sw.add_argument("--hide-on", action="store_true", help="hide ON events")
@@ -1082,7 +1082,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Denoise method id/name: 0 none, 1 stc, 2 refractory, 3 hotpixel, 4 baf, "
             "5 combo(stc+refractory), 6 ratelimit, 7 globalgate, 8 dp, 9 fastdecay, 10 ebf, 11 ebf_optimized, "
-            "12 knoise, 13 evflow, 14 ynoise, 15 ts, 16 mlpf, 17 pfd, 18 n149"
+            "12 knoise, 13 evflow, 14 ynoise, 15 ts, 16 mlpf, 17 pfd, 18 n149, 19 stcf_original"
         ),
     )
     p_roc.add_argument(
@@ -1100,14 +1100,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--engine",
         choices=["python", "numba", "cpp"],
         default="python",
-        help="execution engine (cpp accelerates stc / baf / ebf / n149 / knoise / ynoise / ts / evflow; numba accelerates stc / ts / evflow / pfd for single-method runs)",
+        help="execution engine (cpp accelerates stc / baf / ebf / n149 / knoise / ynoise / ts / evflow / mlpf / pfd; numba accelerates stc / ts / evflow / pfd for single-method runs)",
     )
     p_roc.add_argument("--tick-ns", type=float, default=12.5)
     p_roc.add_argument("--time-us", type=int, default=2000)
     p_roc.add_argument("--radius-px", type=int, default=1)
     p_roc.add_argument("--min-neighbors", type=float, default=2)
     p_roc.add_argument("--refractory-us", type=int, default=50)
-    p_roc.add_argument("--mlpf-model", default="", help="optional TorchScript model path for method=mlpf")
+    p_roc.add_argument("--mlpf-model", default="", help="optional TorchScript .pt or exported .npz model path for method=mlpf")
     p_roc.add_argument("--mlpf-patch", type=int, default=7, help="mlpf patch size (odd, e.g. 7/9/11)")
     p_roc.add_argument("--pfd-mode", choices=["a", "b", "A", "B"], default="a", help="pfd mode: a (default) or b")
     p_roc.add_argument("--hide-on", action="store_true", help="hide ON events")
@@ -1145,7 +1145,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=1,
         help=(
-            "tolerant-match bin neighborhood radius (0=only same time bin; 1=also check ±1 bins). "
+            "tolerant-match bin neighborhood radius (0=only same time bin; 1=also check 卤1 bins). "
             "Only used when --match-us>0."
         ),
     )

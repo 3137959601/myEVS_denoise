@@ -93,6 +93,73 @@ class MLPFNet(nn.Module):
         return self.fc2(x)
 
 
+def binary_auc(y_true: np.ndarray, score: np.ndarray) -> float:
+    y = np.asarray(y_true, dtype=np.float64).reshape(-1)
+    s = np.asarray(score, dtype=np.float64).reshape(-1)
+    pos = y > 0.5
+    n_pos = int(pos.sum())
+    n_neg = int(y.shape[0] - n_pos)
+    if n_pos == 0 or n_neg == 0:
+        return float("nan")
+    order = np.argsort(s, kind="mergesort")
+    ranks = np.empty_like(order, dtype=np.float64)
+    ranks[order] = np.arange(1, y.shape[0] + 1, dtype=np.float64)
+    # Average tied ranks.
+    sorted_s = s[order]
+    start = 0
+    while start < sorted_s.shape[0]:
+        end = start + 1
+        while end < sorted_s.shape[0] and sorted_s[end] == sorted_s[start]:
+            end += 1
+        if end - start > 1:
+            avg = 0.5 * (start + 1 + end)
+            ranks[order[start:end]] = avg
+        start = end
+    rank_sum_pos = float(ranks[pos].sum())
+    return (rank_sum_pos - n_pos * (n_pos + 1) / 2.0) / float(n_pos * n_neg)
+
+
+def best_f1(y_true: np.ndarray, prob: np.ndarray) -> tuple[float, float]:
+    y = np.asarray(y_true, dtype=np.float64).reshape(-1) > 0.5
+    p = np.asarray(prob, dtype=np.float64).reshape(-1)
+    best = 0.0
+    best_thr = 0.5
+    for thr in np.linspace(0.01, 0.99, 99):
+        pred = p >= thr
+        tp = float(np.logical_and(pred, y).sum())
+        fp = float(np.logical_and(pred, ~y).sum())
+        fn = float(np.logical_and(~pred, y).sum())
+        denom = 2.0 * tp + fp + fn
+        f1 = 0.0 if denom <= 0.0 else (2.0 * tp / denom)
+        if f1 > best:
+            best = f1
+            best_thr = float(thr)
+    return best, best_thr
+
+
+def make_split_indices(labels: np.ndarray, val_ratio: float, seed: int, balance_train: bool) -> tuple[np.ndarray, np.ndarray]:
+    rng = np.random.default_rng(int(seed))
+    y = np.asarray(labels).reshape(-1) > 0.5
+    pos = np.flatnonzero(y)
+    neg = np.flatnonzero(~y)
+    rng.shuffle(pos)
+    rng.shuffle(neg)
+
+    n_pos_val = max(1, int(pos.shape[0] * float(val_ratio))) if pos.shape[0] > 0 else 0
+    n_neg_val = max(1, int(neg.shape[0] * float(val_ratio))) if neg.shape[0] > 0 else 0
+    val_idx = np.concatenate([pos[:n_pos_val], neg[:n_neg_val]])
+    tr_pos = pos[n_pos_val:]
+    tr_neg = neg[n_neg_val:]
+    if balance_train and tr_pos.size > 0 and tr_neg.size > 0:
+        m = min(tr_pos.size, tr_neg.size)
+        train_idx = np.concatenate([tr_pos[:m], tr_neg[:m]])
+    else:
+        train_idx = np.concatenate([tr_pos, tr_neg])
+    rng.shuffle(train_idx)
+    rng.shuffle(val_idx)
+    return train_idx.astype(np.int64), val_idx.astype(np.int64)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Train MLPF (torch) from clean/noisy pair and export TorchScript.")
     ap.add_argument("--clean", required=True)
@@ -103,12 +170,20 @@ def main() -> int:
     ap.add_argument("--duration-us", type=int, default=100000)
     ap.add_argument("--patch", type=int, default=5, choices=[3, 5, 7, 9, 11])
     ap.add_argument("--max-events", type=int, default=120000)
+    ap.add_argument(
+        "--sample-mode",
+        choices=["first", "linspace"],
+        default="first",
+        help="how to reduce noisy stream before feature construction; use first for stateful MLPF features",
+    )
     ap.add_argument("--batch-events", type=int, default=1_000_000)
     ap.add_argument("--batch-size", type=int, default=256)
     ap.add_argument("--epochs", type=int, default=5)
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--hidden", type=int, default=20)
     ap.add_argument("--val-ratio", type=float, default=0.2)
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--no-balance", action="store_true", help="disable 1:1 signal/noise balancing for training")
     ap.add_argument("--out-ts", required=True, help="TorchScript output .pt")
     ap.add_argument("--out-meta", required=True, help="metadata json")
     args = ap.parse_args()
@@ -149,8 +224,12 @@ def main() -> int:
         raise SystemExit("No noisy events loaded.")
 
     if int(args.max_events) > 0 and t.shape[0] > int(args.max_events):
-        idx = np.linspace(0, t.shape[0] - 1, int(args.max_events), dtype=np.int64)
-        t, x, y, p = t[idx], x[idx], y[idx], p[idx]
+        if str(args.sample_mode).lower() == "linspace":
+            idx = np.linspace(0, t.shape[0] - 1, int(args.max_events), dtype=np.int64)
+            t, x, y, p = t[idx], x[idx], y[idx], p[idx]
+        else:
+            n_keep = int(args.max_events)
+            t, x, y, p = t[:n_keep], x[:n_keep], y[:n_keep], p[:n_keep]
 
     print("[3/5] build labels...")
     y_sig = signal_mask(
@@ -176,13 +255,31 @@ def main() -> int:
         patch=int(args.patch),
     )
 
-    n = X.shape[0]
-    n_val = max(1, int(n * float(args.val_ratio)))
-    n_train = n - n_val
-    X_train = torch.from_numpy(X[:n_train])
-    y_train = torch.from_numpy(y_sig[:n_train]).unsqueeze(1)
-    X_val = torch.from_numpy(X[n_train:])
-    y_val = torch.from_numpy(y_sig[n_train:]).unsqueeze(1)
+    train_idx, val_idx = make_split_indices(
+        y_sig,
+        val_ratio=float(args.val_ratio),
+        seed=int(args.seed),
+        balance_train=not bool(args.no_balance),
+    )
+    n_train = int(train_idx.shape[0])
+    n_val = int(val_idx.shape[0])
+    if n_train <= 0 or n_val <= 0:
+        raise SystemExit("Empty train/validation split. Check labels and val-ratio.")
+    X_train = torch.from_numpy(X[train_idx])
+    y_train = torch.from_numpy(y_sig[train_idx]).unsqueeze(1)
+    X_val = torch.from_numpy(X[val_idx])
+    y_val = torch.from_numpy(y_sig[val_idx]).unsqueeze(1)
+
+    pos_total = int((y_sig > 0.5).sum())
+    neg_total = int(y_sig.shape[0] - pos_total)
+    print(
+        f"label stats: total={y_sig.shape[0]} signal={pos_total} noise={neg_total} "
+        f"signal_ratio={pos_total / max(1, y_sig.shape[0]):.4f}"
+    )
+    print(
+        f"split stats: train={n_train} val={n_val} "
+        f"train_signal={int((y_sig[train_idx] > 0.5).sum())} train_noise={int((y_sig[train_idx] <= 0.5).sum())}"
+    )
 
     train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=int(args.batch_size), shuffle=True)
     val_loader = DataLoader(TensorDataset(X_val, y_val), batch_size=int(args.batch_size), shuffle=False)
@@ -210,6 +307,8 @@ def main() -> int:
         model.eval()
         va_loss = 0.0
         va_acc = 0.0
+        val_prob_chunks: list[np.ndarray] = []
+        val_y_chunks: list[np.ndarray] = []
         with torch.no_grad():
             for xb, yb in val_loader:
                 xb = xb.to(device)
@@ -217,11 +316,23 @@ def main() -> int:
                 logits = model(xb)
                 loss = crit(logits, yb)
                 va_loss += float(loss.item()) * xb.shape[0]
-                pred = (torch.sigmoid(logits) >= 0.5).float()
+                prob = torch.sigmoid(logits)
+                pred = (prob >= 0.5).float()
                 va_acc += float((pred == yb).float().mean().item()) * xb.shape[0]
+                val_prob_chunks.append(prob.cpu().numpy().reshape(-1))
+                val_y_chunks.append(yb.cpu().numpy().reshape(-1))
         va_loss /= max(1, n_val)
         va_acc /= max(1, n_val)
-        print(f"epoch {ep+1}/{args.epochs} train_loss={tr_loss:.6f} val_loss={va_loss:.6f} val_acc={va_acc:.4f}")
+        val_prob = np.concatenate(val_prob_chunks) if val_prob_chunks else np.empty((0,), dtype=np.float32)
+        val_y_np = np.concatenate(val_y_chunks) if val_y_chunks else np.empty((0,), dtype=np.float32)
+        va_auc = binary_auc(val_y_np, val_prob)
+        va_best_f1, va_best_thr = best_f1(val_y_np, val_prob)
+        always_keep_f1 = best_f1(val_y_np, np.ones_like(val_prob))[0]
+        print(
+            f"epoch {ep+1}/{args.epochs} train_loss={tr_loss:.6f} val_loss={va_loss:.6f} "
+            f"val_acc={va_acc:.4f} val_auc={va_auc:.4f} val_best_f1={va_best_f1:.4f} "
+            f"best_thr={va_best_thr:.2f} always_keep_f1={always_keep_f1:.4f}"
+        )
 
     out_ts = Path(args.out_ts)
     out_ts.parent.mkdir(parents=True, exist_ok=True)
@@ -241,6 +352,12 @@ def main() -> int:
         "height": int(args.height),
         "train_samples": int(n_train),
         "val_samples": int(n_val),
+        "balanced_train": not bool(args.no_balance),
+        "sample_mode": str(args.sample_mode),
+        "seed": int(args.seed),
+        "signal_total": int(pos_total),
+        "noise_total": int(neg_total),
+        "output_type": "logit",
     }
     out_meta = Path(args.out_meta)
     out_meta.parent.mkdir(parents=True, exist_ok=True)

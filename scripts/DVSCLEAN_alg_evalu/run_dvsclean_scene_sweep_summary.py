@@ -44,22 +44,15 @@ def _csv_values(vals: list[float | int]) -> str:
 
 def _algo_space(*, evflow_lite: bool) -> list[AlgoCfg]:
     return [
-        AlgoCfg("baf", "baf", "python", [1, 2, 3], [2000, 8000, 16000, 32000], [1.0]),
-        AlgoCfg("stcf", "stc", "python", [1, 2, 3], [1000, 4000, 8000, 16000, 32000], [1, 2, 3, 4, 5, 6]),
-        AlgoCfg("ebf", "ebf", "python", [2, 3, 4], [16000, 32000, 64000], [x * 0.5 for x in range(0, 17)]),
-        AlgoCfg("knoise", "knoise", "python", [1], [1000, 2000, 4000, 8000, 16000, 32000], [0, 1, 2, 3, 4, 5, 6]),
-        AlgoCfg(
-            "evflow",
-            "evflow",
-            "numba",
-            [2] if evflow_lite else [2, 3],
-            [8000] if evflow_lite else [8000, 16000, 32000],
-            [64.0] if evflow_lite else [0, 8, 16, 24, 32, 48, 64],
-        ),
-        AlgoCfg("ynoise", "ynoise", "python", [2, 3, 4], [8000, 16000, 32000, 64000], [1, 2, 3, 4, 6, 8, 10, 12]),
-        AlgoCfg("ts", "ts", "numba", [2, 3, 4], [8000, 16000, 32000, 64000], [x / 10.0 for x in range(1, 10)]),
+        AlgoCfg("baf", "baf", "cpp", [1, 2], [2000, 4000, 8000, 16000], [1.0]),
+        AlgoCfg("stcf", "stc", "cpp", [1, 2], [2000, 4000, 8000, 16000, 32000], [1, 2, 3, 4, 5, 6]),
+        AlgoCfg("ebf", "ebf", "cpp", [2, 3], [8000, 16000, 32000, 64000], [x * 0.5 for x in range(0, 17)]),
+        AlgoCfg("knoise", "knoise", "cpp", [1], [1000, 2000, 4000, 8000, 16000, 32000], [0, 1, 2, 3, 4, 5, 6]),
+        AlgoCfg("evflow", "evflow", "cpp", [2], [8000, 16000], [64.0] if evflow_lite else [0, 8, 16, 24, 32, 48, 64]),
+        AlgoCfg("ynoise", "ynoise", "cpp", [2, 3], [8000, 16000, 32000, 64000], [1, 2, 3, 4, 6, 8]),
+        AlgoCfg("ts", "ts", "cpp", [2, 3], [16000, 32000, 64000, 128000], [x / 10.0 for x in range(1, 10)]),
         AlgoCfg("mlpf", "mlpf", "python", [3], [8000, 16000, 32000, 64000], [0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]),
-        AlgoCfg("pfd", "pfd", "numba", [2, 3, 4], [8000, 16000, 32000, 64000], [1, 2, 3, 4, 5, 6, 8]),
+        AlgoCfg("pfd", "pfd", "cpp", [3], [8000, 16000, 32000], [1, 2, 3, 4, 5, 6, 8]),
     ]
 
 
@@ -123,6 +116,8 @@ def _run_cli_roc(
         if not mlpf_model or not Path(mlpf_model).exists():
             raise FileNotFoundError(f"MLPF model not found: {mlpf_model}")
         cmd.extend(["--mlpf-model", str(mlpf_model), "--mlpf-patch", str(int(mlpf_patch))])
+    if method == "pfd":
+        cmd.extend(["--refractory-us", "2", "--pfd-mode", "a"])
     subprocess.run(cmd, check=True)
     return pd.read_csv(out_csv)
 

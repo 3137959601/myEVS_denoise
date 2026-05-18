@@ -1,6 +1,7 @@
 ﻿param(
   [string]$Algorithm = "",
   [string[]]$Algorithms = @(),
+  [string]$MlpfModelPattern = "",
   [int]$MaxEvents = 0,
   [ValidateSet("auto", "python", "numba", "cpp")]
   [string]$Engine = "auto",
@@ -14,6 +15,7 @@ $MainScript = Join-Path $PSScriptRoot "run_driving_alg.ps1"
 & $MainScript `
   -Algorithm $Algorithm `
   -Algorithms $Algorithms `
+  -MlpfModelPattern $MlpfModelPattern `
   -MaxEvents $MaxEvents `
   -Engine $Engine `
   -SweepProfile $SweepProfile `

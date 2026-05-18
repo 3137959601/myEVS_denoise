@@ -125,6 +125,8 @@ def _run_cli_roc(
         if not mlpf_model or not Path(mlpf_model).exists():
             raise FileNotFoundError(f"MLPF model not found: {mlpf_model}")
         cmd.extend(["--mlpf-model", str(mlpf_model), "--mlpf-patch", str(int(mlpf_patch))])
+    if str(method).lower() == "pfd":
+        cmd.extend(["--refractory-us", "2", "--pfd-mode", "a"])
     subprocess.run(cmd, check=True)
     return pd.read_csv(out_csv)
 
@@ -132,22 +134,15 @@ def _run_cli_roc(
 def _algo_space(*, evflow_lite: bool = False) -> list[AlgoCfg]:
     # reduced grid for quick threshold diagnosis
     return [
-        AlgoCfg("baf", "baf", "python", [1, 2], [2000, 8000], [1.0]),
-        AlgoCfg("stcf", "stc", "python", [1, 2], [4000, 8000], [1, 2, 3, 4]),
-        AlgoCfg("ebf", "ebf", "python", [2, 3], [16000, 32000], [x * 0.5 for x in range(0, 11)]),
-        AlgoCfg("knoise", "knoise", "python", [1], [2000, 8000], [0, 1, 2, 3, 4]),
-        AlgoCfg(
-            "evflow",
-            "evflow",
-            "numba",
-            [2],
-            [8000] if evflow_lite else [8000, 16000],
-            [64.0] if evflow_lite else [8, 16, 24, 32, 48, 64],
-        ),
-        AlgoCfg("ynoise", "ynoise", "python", [2, 3], [8000, 16000], [1, 2, 3, 4, 6, 8]),
-        AlgoCfg("ts", "ts", "numba", [2], [8000, 16000], [0.1, 0.2, 0.4, 0.6, 0.8]),
+        AlgoCfg("baf", "baf", "cpp", [1, 2], [2000, 8000], [1.0]),
+        AlgoCfg("stcf", "stc", "cpp", [1, 2], [4000, 8000], [1, 2, 3, 4]),
+        AlgoCfg("ebf", "ebf", "cpp", [2, 3], [16000, 32000], [x * 0.5 for x in range(0, 11)]),
+        AlgoCfg("knoise", "knoise", "cpp", [1], [2000, 8000], [0, 1, 2, 3, 4]),
+        AlgoCfg("evflow", "evflow", "cpp", [2], [8000, 16000], [8, 16, 24, 32, 48, 64]),
+        AlgoCfg("ynoise", "ynoise", "cpp", [2, 3], [8000, 16000], [1, 2, 3, 4, 6, 8]),
+        AlgoCfg("ts", "ts", "cpp", [2], [8000, 16000], [0.1, 0.2, 0.4, 0.6, 0.8]),
         AlgoCfg("mlpf", "mlpf", "python", [3], [8000, 16000], [0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]),
-        AlgoCfg("pfd", "pfd", "numba", [2, 3], [8000, 16000], [1, 2, 3, 4, 6]),
+        AlgoCfg("pfd", "pfd", "cpp", [2, 3], [8000, 16000], [1, 2, 3, 4, 6]),
     ]
 
 
@@ -233,6 +228,9 @@ def main() -> int:
     tb = TimeBase(tick_ns=float(args.tick_ns))
     summary_rows = []
     algs = _algo_space(evflow_lite=bool(args.evflow_lite))
+    # Skip MLPF if model not available (training too slow for LED 1280x720)
+    if not args.mlpf_model_pattern or "{scene}" not in args.mlpf_model_pattern:
+        algs = [a for a in algs if a.name != "mlpf"]
     print(f"[scene-sweep] scene={args.scene} max_events={int(args.max_events)} algorithms={len(algs)+1}", flush=True)
     for ai, alg in enumerate(algs, start=1):
         all_rows = []

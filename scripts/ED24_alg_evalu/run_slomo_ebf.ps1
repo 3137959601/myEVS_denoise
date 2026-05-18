@@ -42,9 +42,9 @@ $MATCH_US = 0
 $MATCH_BIN_RADIUS = 0
 
 # =========================== TUNE_HERE: EBF sweep ===========================
-$EBF_RADIUS_LIST = 3,4,5
-$EBF_TAU_LIST = 32000,64000,128000,256000,512000
-$EBF_THR_LIST = "0,2,4,6,8,10,12,14,16,18,20,22,24"
+$EBF_RADIUS_LIST = 2,3,4,5
+$EBF_TAU_LIST = 8000,16000,32000,64000,128000,256000,512000
+$EBF_THR_LIST = "0,0.25,0.5,0.75,1,1.25,1.5,1.75,2,2.5,3,4,5,6,8"
 
 $OUT_DIR = "data/ED24/myPedestrain_06/EBF"
 New-Item -ItemType Directory -Force -Path $OUT_DIR | Out-Null
@@ -126,7 +126,7 @@ function Run-Ebf-For-Noise {
 
   foreach ($r in $EBF_RADIUS_LIST) {
     foreach ($tau in $EBF_TAU_LIST) {
-      & $PY -m myevs.cli roc `
+      & $PY -m myevs.cli roc --engine cpp `
         --clean $CleanPath --noisy $NoisyPath `
         --assume npy --width 346 --height 260 --tick-ns $TICK_NS `
         --method ebf --radius-px $r --time-us $tau `

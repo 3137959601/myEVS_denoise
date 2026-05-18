@@ -334,7 +334,7 @@ foreach ($alg in $SELECTED_ALGS) {
         # ========================= TUNE_HERE: KNOISE sweep =========================
         # Standard ROC: fixed tau, sweep threshold.
         $knoiseTauList = @(16000, 32000, 64000, 128000, 256000)
-        $thr = "1,2,3"
+        $thr = "0,1,2,3,4,5,6"
         foreach ($tau in $knoiseTauList) {
           Run-Roc -Clean $clean -Noisy $noisy -OutCsv $outCsv -Tag ("knoise_tau{0}" -f $tau) -Method "knoise" -Radius 1 -TimeUs $tau -SweepValues $thr
         }
@@ -375,7 +375,7 @@ foreach ($alg in $SELECTED_ALGS) {
         $tauList = if ($IS_DENSE) { @( 8000, 16000, 32000, 64000) } else { @(8000, 16000, 32000, 64000) }
         foreach ($r in $rList) {
           foreach ($tau in $tauList) {
-            Run-Roc -Clean $clean -Noisy $noisy -OutCsv $outCsv -Tag ("evflow_r{0}_tau{1}" -f $r, $tau) -Method "evflow" -Radius $r -TimeUs $tau -SweepValues $thr -Engine "numba"
+            Run-Roc -Clean $clean -Noisy $noisy -OutCsv $outCsv -Tag ("evflow_r{0}_tau{1}" -f $r, $tau) -Method "evflow" -Radius $r -TimeUs $tau -SweepValues $thr -Engine "cpp"
           }
         }
       }
@@ -396,7 +396,7 @@ foreach ($alg in $SELECTED_ALGS) {
         $thr = if ($IS_DENSE) { New-FloatRangeCsv -Start 0.01 -End 0.80 -Step 0.01 -Fmt "0.00" } else { "0.05,0.1,0.2,0.3,0.5" }
         foreach ($r in @(1, 2, 3, 4)) {
           foreach ($tau in @(16000, 32000, 64000, 128000)) {
-            Run-Roc -Clean $clean -Noisy $noisy -OutCsv $outCsv -Tag ("ts_r{0}_decay{1}" -f $r, $tau) -Method "ts" -Radius $r -TimeUs $tau -SweepValues $thr -Engine "numba"
+            Run-Roc -Clean $clean -Noisy $noisy -OutCsv $outCsv -Tag ("ts_r{0}_decay{1}" -f $r, $tau) -Method "ts" -Radius $r -TimeUs $tau -SweepValues $thr -Engine "cpp"
           }
         }
       }
@@ -435,7 +435,7 @@ foreach ($alg in $SELECTED_ALGS) {
         $mList = if ($IS_DENSE) { @(1,2,3,4) } else { @(1,2,3) }
         foreach ($m in $mList) {
           foreach ($tau in $tauList) {
-            Run-Roc -Clean $clean -Noisy $noisy -OutCsv $outCsv -Tag ("pfd_r{0}_tau{1}_m{2}" -f $r, $tau, $m) -Method "pfd" -Radius $r -TimeUs $tau -SweepValues $thr -Engine "numba" -ExtraArgs @("--refractory-us", "$m", "--pfd-mode", "a")
+            Run-Roc -Clean $clean -Noisy $noisy -OutCsv $outCsv -Tag ("pfd_r{0}_tau{1}_m{2}" -f $r, $tau, $m) -Method "pfd" -Radius $r -TimeUs $tau -SweepValues $thr -Engine "cpp" -ExtraArgs @("--refractory-us", "$m", "--pfd-mode", "a")
           }
         }
       }

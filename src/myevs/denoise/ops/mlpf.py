@@ -13,6 +13,7 @@ flattened to shape [2 * patch * patch].
 """
 
 from dataclasses import dataclass
+import json
 import math
 from pathlib import Path
 
@@ -36,8 +37,15 @@ class MlpfOp:
         n = int(dims.width) * int(dims.height)
         self.last_ts = np.zeros((n,), dtype=np.uint64)
 
+        model_path = str(getattr(cfg, "mlpf_model_path", "") or "").strip()
+        self.model_meta: dict[str, object] = {}
+        if model_path:
+            meta_path = Path(model_path).with_suffix(".json")
+            if meta_path.exists():
+                self.model_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+
         # Keep patch configurable but bounded.
-        p = int(getattr(cfg, "mlpf_patch", 7) or 7)
+        p = int(self.model_meta.get("patch", getattr(cfg, "mlpf_patch", 7) or 7))
         if p < 3:
             p = 3
         if p % 2 == 0:
@@ -46,11 +54,25 @@ class MlpfOp:
         self.radius = self.patch // 2
         self.area = self.patch * self.patch
         self.in_dim = 2 * self.area
+        meta_in_dim = int(self.model_meta.get("input_dim", self.in_dim))
+        if meta_in_dim != self.in_dim:
+            raise ValueError(
+                f"MLPF model metadata input_dim={meta_in_dim} does not match patch={self.patch} "
+                f"(expected {self.in_dim}). Check model/json pairing."
+            )
+
+        self.model_win_ticks: int | None = None
+        if "duration_ticks" in self.model_meta:
+            self.model_win_ticks = int(self.model_meta["duration_ticks"])
+        elif "duration_us" in self.model_meta:
+            self.model_win_ticks = int(self.tb.us_to_ticks(int(self.model_meta["duration_us"])))
+        # Models exported by scripts/train_mlpf_torch.py output logits.
+        # If no metadata is present, keep the older auto mode for external models.
+        self.output_type = str(self.model_meta.get("output_type", "logit" if self.model_meta else "auto")).lower()
 
         # Optional TorchScript model.
         self._torch = None
         self._model = None
-        model_path = str(getattr(cfg, "mlpf_model_path", "") or "").strip()
         if model_path:
             pth = Path(model_path)
             if not pth.exists():
@@ -86,7 +108,7 @@ class MlpfOp:
         return feat
 
     def accept(self, x: int, y: int, p: int, t: int) -> bool:
-        win_ticks = int(self.tb.us_to_ticks(int(self.cfg.time_window_us)))
+        win_ticks = int(self.model_win_ticks or self.tb.us_to_ticks(int(self.cfg.time_window_us)))
         thr = float(self.cfg.min_neighbors)
 
         idx0 = self._idx(x, y)
@@ -106,7 +128,12 @@ class MlpfOp:
                 inp = torch.from_numpy(feat).view(1, -1)
                 out = self._model(inp)
                 v = float(out.reshape(-1)[0].item())
-                prob = v if (0.0 <= v <= 1.0) else (1.0 / (1.0 + math.exp(-v)))
+                if self.output_type == "logit":
+                    prob = 1.0 / (1.0 + math.exp(-v))
+                elif self.output_type == "prob":
+                    prob = v
+                else:
+                    prob = v if (0.0 <= v <= 1.0) else (1.0 / (1.0 + math.exp(-v)))
             return prob >= thr
 
         # Proxy fallback: deterministic score from recency channel.

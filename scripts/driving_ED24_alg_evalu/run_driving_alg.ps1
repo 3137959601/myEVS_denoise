@@ -1,4 +1,4 @@
-param(
+﻿param(
   [string]$Algorithm = "",
   [string[]]$Algorithms = @(),
   [string]$MlpfModelPattern = "",
@@ -30,12 +30,12 @@ $HEIGHT = 260
 $IS_DENSE = ($SweepProfile.ToLower() -eq "dense")
 
 $LEVELS = @(
-  @{ Name = "1hz"; Dir = Join-Path $DatasetRoot ("driving_noise_1hz_{0}" -f $DatasetSuffix) },
-  @{ Name = "3hz"; Dir = Join-Path $DatasetRoot ("driving_noise_3hz_{0}" -f $DatasetSuffix) },
-  @{ Name = "5hz"; Dir = Join-Path $DatasetRoot ("driving_noise_5hz_{0}" -f $DatasetSuffix) }
+  @{ Name = "2hz"; Dir = Join-Path $DatasetRoot ("driving_noise_2hz_{0}" -f $DatasetSuffix) },
+  @{ Name = "8hz"; Dir = Join-Path $DatasetRoot ("driving_noise_8hz_{0}" -f $DatasetSuffix) }
 )
 $ALL_ALGS = @("baf", "stcf", "ebf", "n149", "knoise", "evflow", "ynoise", "ts", "mlpf", "pfd")
-$CPP_ALGS = @("baf", "stcf", "ebf", "n149", "knoise", "evflow", "ynoise", "ts")
+$CPP_ALGS = @("baf", "stcf", "ebf", "n149", "knoise", "evflow", "ynoise", "ts", "mlpf", "pfd")
+$AUTO_CPP_ALGS = @("baf", "stcf", "ebf", "n149", "knoise", "evflow", "ynoise", "ts", "pfd")
 
 function Resolve-Algorithms {
   param(
@@ -120,8 +120,7 @@ function Resolve-EngineForAlg {
     return "numba"
   }
   if ($req -eq "python") { return "python" }
-  if ($Alg -in $CPP_ALGS) { return "cpp" }
-  if ($Alg -eq "pfd") { return "numba" }
+  if ($Alg -in $AUTO_CPP_ALGS) { return "cpp" }
   return "python"
 }
 
@@ -299,7 +298,7 @@ if ($MaxEvents -gt 0) {
 }
 $SELECTED_ALGS = Resolve-Algorithms -Algorithm $Algorithm -Algorithms $Algorithms
 Write-Host ("Selected algorithms: {0}" -f ($SELECTED_ALGS -join ", "))
-Write-Host ("Engine policy: {0} (auto => baf/stcf/ebf/n149/knoise/evflow/ynoise/ts use cpp, pfd uses numba, others use python)" -f $Engine)
+Write-Host ("Engine policy: {0} (auto => baf/stcf/ebf/n149/knoise/evflow/ynoise/ts/pfd use cpp; mlpf uses python unless -Engine cpp is requested)" -f $Engine)
 
 foreach ($alg in $SELECTED_ALGS) {
 $algEngine = Resolve-EngineForAlg -Alg $alg -RequestedEngine $Engine
@@ -337,15 +336,15 @@ foreach ($lv in $LEVELS) {
   Write-Host ("noisy={0}" -f $noisy)
   $t0 = Get-Date
 
+  # Common dense threshold for EBF and N149 (aligned for fair comparison)
+  # Coarse: 17 points dense in 0-2 range; Dense: step=0.1 in 0-3, step=0.5 up to 8
+  $EBF_N149_THR_COARSE = "0,0.2,0.4,0.6,0.8,1,1.2,1.4,1.6,1.8,2,2.5,3,4,5,6,8"
+
   switch ($alg) {
     "baf" {
-      # Align with ED24 style: one curve per r by sweeping tau.
-      $tauList = if ($IS_DENSE) {
-        "1000,2000,4000,8000,12000,16000,24000,32000,48000,64000,96000,128000"
-      } else {
-        "1000,2000,4000,8000,16000,32000,64000,128000"
-      }
-      foreach ($r in @(1,2,3,4)) {
+      # Narrowed: best r=1-2, tau=1K-16K based on prior driving results
+      $tauList = if ($IS_DENSE) { "1000,2000,4000,8000,12000,16000,24000,32000" } else { "1000,2000,4000,8000,16000,32000" }
+      foreach ($r in @(1,2,3)) {
         & $PY -m myevs.cli roc `
           --clean $clean --noisy $noisy `
           --assume npy --width $WIDTH --height $HEIGHT `
@@ -355,19 +354,13 @@ foreach ($lv in $LEVELS) {
           --param time-us --values $tauList `
           --match-us $MATCH_US --match-bin-radius $MATCH_BIN_RADIUS `
           --tag ("baf_r{0}" -f $r) --out-csv $outCsv --append --progress
-        if ($LASTEXITCODE -ne 0) {
-          throw "myevs roc failed for baf r=$r"
-        }
+        if ($LASTEXITCODE -ne 0) { throw "myevs roc failed for baf r=$r" }
       }
     }
     "stcf" {
-      # STCF is the slowest grid in this script; coarse mode uses a reduced tau list.
-      $tauList = if ($IS_DENSE) {
-        "100,200,500,1000,2000,4000,8000,16000,32000,64000,128000,256000,512000"
-      } else {
-        "500,1000,2000,4000,8000,16000,32000,64000,128000"
-      }
-      foreach ($r in @(1,2,3,4)) {
+      # Narrowed: best r=1-2, tau=2K-64K
+      $tauList = if ($IS_DENSE) { "500,1000,2000,4000,8000,16000,32000,64000,128000" } else { "1000,2000,4000,8000,16000,32000,64000" }
+      foreach ($r in @(1,2,3)) {
         & $PY -m myevs.cli roc `
           --clean $clean --noisy $noisy `
           --assume npy --width $WIDTH --height $HEIGHT `
@@ -377,23 +370,23 @@ foreach ($lv in $LEVELS) {
           --param time-us --values $tauList `
           --match-us $MATCH_US --match-bin-radius $MATCH_BIN_RADIUS `
           --tag ("stcf_r{0}" -f $r) --out-csv $outCsv --append --progress
-        if ($LASTEXITCODE -ne 0) {
-          throw "myevs roc failed for stcf r=$r"
-        }
+        if ($LASTEXITCODE -ne 0) { throw "myevs roc failed for stcf r=$r" }
       }
     }
     "ebf" {
-      $thr = if ($IS_DENSE) { New-FloatRangeCsv -Start 0 -End 8 -Step 0.25 -Fmt "0.00" } else { "0,0.5,1,1.5,2,2.5,3,4,5,6,8" }
-      foreach ($r in @(2,3,4)) {
-        foreach ($tau in @(16000,32000,64000,128000,256000)) {
+      # EBF/N149 aligned threshold; narrowed r={2,3}, tau={8K-64K}
+      $thr = if ($IS_DENSE) { (New-FloatRangeCsv -Start 0 -End 3 -Step 0.1 -Fmt "0.0") + "," + (New-FloatRangeCsv -Start 3.5 -End 8 -Step 0.5 -Fmt "0.0") } else { $EBF_N149_THR_COARSE }
+      foreach ($r in @(2,3)) {
+        foreach ($tau in @(8000,16000,32000,64000)) {
           Run-Roc -Clean $clean -Noisy $noisy -OutCsv $outCsv -Tag ("ebf_r{0}_tau{1}" -f $r, $tau) -Method "ebf" -Radius $r -TimeUs $tau -Values $thr -Engine $algEngine
         }
       }
     }
     "n149" {
-      $thr = if ($IS_DENSE) { New-FloatRangeCsv -Start 0 -End 8 -Step 0.25 -Fmt "0.00" } else { "0,0.5,1,1.5,2,2.5,3,4,5,6,8" }
-      foreach ($r in @(2,3,4,5)) {
-        foreach ($tau in @(16000,32000,64000,128000,256000,512000)) {
+      # SAME threshold as EBF for fair comparison; narrowed r={2,3}, tau={16K-64K}
+      $thr = if ($IS_DENSE) { (New-FloatRangeCsv -Start 0 -End 3 -Step 0.1 -Fmt "0.0") + "," + (New-FloatRangeCsv -Start 3.5 -End 8 -Step 0.5 -Fmt "0.0") } else { $EBF_N149_THR_COARSE }
+      foreach ($r in @(2,3)) {
+        foreach ($tau in @(16000,32000,64000)) {
           Run-Roc -Clean $clean -Noisy $noisy -OutCsv $outCsv -Tag ("n149_r{0}_tau{1}" -f $r, $tau) -Method "n149" -Radius $r -TimeUs $tau -Values $thr -Engine $algEngine
         }
       }
@@ -405,27 +398,22 @@ foreach ($lv in $LEVELS) {
       }
     }
     "evflow" {
-      $thr = if ($IS_DENSE) { New-IntRangeCsv -Start 0 -End 64 -Step 2 } else { "0,8,16,24,32,48,64" }
-      $rList = if ($IS_DENSE) { @(2,3,4,5) } else { @(2,3,4) }
-      $tauList = if ($IS_DENSE) { @(8000,16000,24000,32000,48000,64000,96000) } else { @(8000,16000,32000) }
-      foreach ($r in $rList) {
-        foreach ($tau in $tauList) {
-          Run-Roc -Clean $clean -Noisy $noisy -OutCsv $outCsv -Tag ("evflow_r{0}_tau{1}" -f $r, $tau) -Method "evflow" -Radius $r -TimeUs $tau -Values $thr -Engine $algEngine
-        }
-      }
+      Write-Host "SKIP: evflow (per user request)"
     }
     "ynoise" {
+      # Narrowed: best r=2, tau=8K-32K
       $thr = if ($IS_DENSE) { New-IntRangeCsv -Start 0 -End 12 -Step 1 } else { "1,2,3,4,6,8" }
-      foreach ($r in @(2, 3, 4)) {
-        foreach ($tau in @(8000, 16000, 32000, 64000,128000,256000)) {
+      foreach ($r in @(2, 3)) {
+        foreach ($tau in @(8000, 16000, 32000, 64000)) {
           Run-Roc -Clean $clean -Noisy $noisy -OutCsv $outCsv -Tag ("ynoise_r{0}_tau{1}" -f $r, $tau) -Method "ynoise" -Radius $r -TimeUs $tau -Values $thr -Engine $algEngine
         }
       }
     }
     "ts" {
-      $thr = if ($IS_DENSE) { New-FloatRangeCsv -Start 0.01 -End 0.80 -Step 0.01 -Fmt "0.00" } else { "0.05,0.1,0.2,0.3,0.5" }
+      # Narrowed: best r=2, decay=32K-64K
+      $thr = if ($IS_DENSE) { New-FloatRangeCsv -Start 0.01 -End 0.80 -Step 0.01 -Fmt "0.00" } else { "0.05,0.1,0.15,0.2,0.25,0.3,0.4,0.5" }
       foreach ($r in @(2, 3)) {
-        foreach ($tau in @(32000, 64000, 128000, 256000)) {
+        foreach ($tau in @(16000, 32000, 64000, 128000)) {
           Run-Roc -Clean $clean -Noisy $noisy -OutCsv $outCsv -Tag ("ts_r{0}_decay{1}" -f $r, $tau) -Method "ts" -Radius $r -TimeUs $tau -Values $thr -Engine $algEngine
         }
       }
@@ -433,28 +421,49 @@ foreach ($lv in $LEVELS) {
     "mlpf" {
       $mlpfArgs = @()
       $hasMlpfModel = $false
+      $mlpfPatch = 7
+      $mlpfDurationUs = 100000
       if ($MlpfModelPattern -and $MlpfModelPattern.Trim().Length -gt 0) {
         $resolved = $MlpfModelPattern.Replace("{level}", $lv.Name)
         if (!(Test-Path $resolved)) {
           throw "MLPF model not found for level=$($lv.Name): $resolved"
         }
-        $mlpfArgs = @("--mlpf-model", $resolved, "--mlpf-patch", "7")
+        $metaPath = [System.IO.Path]::ChangeExtension($resolved, ".json")
+        if (Test-Path $metaPath) {
+          $meta = Get-Content -Raw $metaPath | ConvertFrom-Json
+          if ($meta.patch) { $mlpfPatch = [int]$meta.patch }
+          if ($meta.duration_us) { $mlpfDurationUs = [int]$meta.duration_us }
+        } else {
+          Write-Host ("WARN: MLPF metadata json not found, using defaults patch={0}, duration_us={1}: {2}" -f $mlpfPatch, $mlpfDurationUs, $metaPath)
+        }
+        $mlpfArgs = @("--mlpf-model", $resolved, "--mlpf-patch", ([string]$mlpfPatch))
         $hasMlpfModel = $true
       }
-      $thr = if ($hasMlpfModel) {
-        if ($IS_DENSE) { New-FloatRangeCsv -Start 0.05 -End 0.95 -Step 0.05 -Fmt "0.00" } else { "0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9" }
+
+      if ($hasMlpfModel) {
+        # Real TorchScript MLPF: duration/patch must match training metadata.
+        # Sweep only probability threshold; do not sweep tau.
+        $thr = New-FloatRangeCsv -Start 0.01 -End 0.99 -Step 0.01 -Fmt "0.00"
+        Run-Roc -Clean $clean -Noisy $noisy -OutCsv $outCsv `
+          -Tag ("mlpf_model_patch{0}_dur{1}" -f $mlpfPatch, $mlpfDurationUs) `
+          -Method "mlpf" -Radius ([int]($mlpfPatch / 2)) -TimeUs $mlpfDurationUs -Values $thr -Engine $algEngine -ExtraArgs $mlpfArgs
       } else {
-        if ($IS_DENSE) { New-IntRangeCsv -Start 0 -End 30 -Step 1 } else { "2,4,6,8,10,12,16,18,20,22,24,26" }
-      }
-      foreach ($tau in @(32000, 64000, 128000, 256000,512000)) {
-        Run-Roc -Clean $clean -Noisy $noisy -OutCsv $outCsv -Tag ("mlpf_tau{0}" -f $tau) -Method "mlpf" -Radius 3 -TimeUs $tau -Values $thr -ExtraArgs $mlpfArgs
+        if ($algEngine -eq "cpp") {
+          throw "MLPF engine=cpp requires -MlpfModelPattern and exported same-stem .npz weights. Run scripts/export_mlpf_weights.py first."
+        }
+        # Proxy fallback keeps the old score scale; use only for debugging.
+        $thr = if ($IS_DENSE) { New-IntRangeCsv -Start 0 -End 30 -Step 1 } else { "2,4,6,8,10,12,16,18,20,22,24,26" }
+        foreach ($tau in @(32000, 64000, 128000, 256000, 512000)) {
+          Run-Roc -Clean $clean -Noisy $noisy -OutCsv $outCsv -Tag ("mlpf_proxy_tau{0}" -f $tau) -Method "mlpf" -Radius 3 -TimeUs $tau -Values $thr -Engine $algEngine
+        }
       }
     }
     "pfd" {
+      # Narrowed: best r=3, tau=8K-32K, m=1-2
       $thr = if ($IS_DENSE) { New-IntRangeCsv -Start 0 -End 10 -Step 1 } else { "1,2,3,4,5,6,7,8" }
       $r = 3
-      $tauList = if ($IS_DENSE) { @(8000,12000,16000,24000,32000,48000,64000,96000,128000,192000,256000) } else { @(8000,16000,32000,64000,128000,256000) }
-      $mList = if ($IS_DENSE) { @(1,2,3,4) } else { @(1,2,3) }
+      $tauList = if ($IS_DENSE) { @(8000,12000,16000,24000,32000) } else { @(8000,16000,32000) }
+      $mList = if ($IS_DENSE) { @(1,2,3) } else { @(1,2) }
       foreach ($m in $mList) {
         foreach ($tau in $tauList) {
           & $PY -m myevs.cli roc `
@@ -466,9 +475,7 @@ foreach ($lv in $LEVELS) {
             --param min-neighbors --values $thr `
             --match-us $MATCH_US --match-bin-radius $MATCH_BIN_RADIUS `
             --tag ("pfd_r{0}_tau{1}_m{2}" -f $r, $tau, $m) --out-csv $outCsv --append --progress
-          if ($LASTEXITCODE -ne 0) {
-            throw "myevs roc failed for pfd r=$r tau=$tau m=$m"
-          }
+          if ($LASTEXITCODE -ne 0) { throw "myevs roc failed for pfd r=$r tau=$tau m=$m" }
         }
       }
     }

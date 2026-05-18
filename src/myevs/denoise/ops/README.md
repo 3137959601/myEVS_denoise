@@ -127,33 +127,44 @@ $$
 \text{keep}_i=\mathbf{1}[S_i>\theta_f],\quad \theta_f=\texttt{min-neighbors}.
 $$
 
-`N149`（`src/myevs/denoise/ops/ebfopt_part2/n149_n145_s52_euclid_compactlut_backbone.py`）：
-- 基底项：同/反极性分别累计，时间核是平方线性衰减，空间核是欧式高斯 LUT。
+`N149` → `N149 v2.1`（C++ 实现：`N149Native`，2026-05-15 定稿）：
+
+> 原始 N149 经消融实验确认 \(b_i\)（beta）和 \(s_i\)（sfrac）全场景零贡献后永久移除。
+> 公式优化实验（7 数据集 × 4 组合）确认 \(u_i\) 分母取 \(\tau\)、\(B_i\) 分母取 \(1+u\) 为最优。
+
+- 基底项：同/反极性分别累计，时间核平方线性衰减，空间核欧式高斯。
 $$
 w_t(i,j)=\left(\max\!\left(0,1-\frac{\Delta t_{ij}}{\tau}\right)\right)^2,\qquad
 w_s(i,j)=\exp\!\left(-\frac{\|q_i-q_j\|_2^2}{2\sigma^2}\right).
 $$
 $$
-R_i^{+}=\sum_{j\in\mathcal{N}_r(i)\setminus\{i\}} w_t(i,j)\, w_s(i,j)\,\mathbf{1}[p_j=p_i],\qquad
-R_i^{-}=\sum_{j\in\mathcal{N}_r(i)\setminus\{i\}} w_t(i,j)\, w_s(i,j)\,\mathbf{1}[p_j=-p_i].
+R_i^{+}=\sum_{j\in\mathcal{N}_r(i)\setminus\{i\}} w_t w_s\,\mathbf{1}[p_j=p_i],\qquad
+R_i^{-}=\sum_{j\in\mathcal{N}_r(i)\setminus\{i\}} w_t w_s\,\mathbf{1}[p_j=-p_i].
 $$
-- 状态定义（代码变量映射）：
-1. \(h_i\)：中心像素热状态（`hot_state`）。
-2. \(u_i\)：自状态归一化（`u_self`）。
-3. \(m_i\)：反极混合状态 EMA（`mstate`）。
-4. \(b_i\)：支持增益状态 EMA（`b`）。
-5. \(s_i\)：支持率（`cnt_support/cnt_possible`）。
-- 评分：
+- 2 个核心状态（代码变量映射）：
+1. \(h_i\)：中心像素热状态（`hot_state`），按 \(\Delta t\) 衰减与 \(\tau\) 增长。
+2. \(m_i\)：反极混合状态 EMA（`mstate`），更新公式：
+   $$\text{mix}_i=\frac{R_i^{-}}{R_i^{+}+R_i^{-}+\varepsilon},\quad
+     m_i \leftarrow m_i + (\text{mix}_i - m_i)/4096$$
+
+- 评分（等价两步）：
 $$
-u_i=\frac{h_i}{h_i+\tau/2+\varepsilon},\quad
-\alpha_i=(1-m_i)^2,\quad
+\alpha_i=(1-m_i)^2,\qquad
 \widetilde{R}_i=R_i^{+}+\alpha_i R_i^{-}.
 $$
 $$
-B_i=\frac{\widetilde{R}_i}{1+u_i^2},\qquad
-S_i=B_i\,(1+b_i s_i).
+\boxed{S_i=\widetilde{R}_i\cdot\frac{h_i+\tau}{2h_i+\tau}
+       =\big(R_i^{+}+(1-m_i)^2R_i^{-}\big)\cdot\frac{h_i+\tau}{2h_i+\tau}}
 $$
-- 最终由外部阈值扫频决策（脚本里对 `S_i` 取阈值）。
+> 等价于 \(S_i=\widetilde{R}_i/(1+u_i)\) with \(u_i=h_i/(h_i+\tau)\)，但省去中间 \(u_i\)，更省一次除法。折扣因子 \(\in[\tfrac{1}{2},1]\)：像素越活跃折扣越重。
+> **FPGA 实现**：\(h\) 截断至 12-14 bit（§9），\(\tau\) 固定，折扣因子可预计算为 \(2^N\) 条目 LUT（< 8Kb BRAM）。得分 = \(\widetilde{R} \times \text{LUT}[h]\)，无需除法器。
+- 最终由外部阈值扫频决策（`keep=\mathbf{1}[S_i>\theta_f]`）。
+
+**与原始 N149 的差异**：
+- ✗ 移除 \(b_i\)（beta_state）和 \(s_i\)（sfrac）——消融实验全场景 |ΔAUC|≤0.0004
+- \(u_i\) 分母 \(\tau/2 \to \tau\)：7/7 数据集 AUC 一致，\(h/(h+\tau)\) 可解释性更好
+- \(B_i\) 分母 \(1+u^2 \to 1+u\)：4/7 数据集更优，计算更简单
+- 完整消融与优化记录见 `README2.md` §8、§10
 
 `N179`（`src/myevs/denoise/ops/ebfopt_part2/n179_cpp_final_fast32_backbone.py`）：
 - 版本更正（2026-05-07）：

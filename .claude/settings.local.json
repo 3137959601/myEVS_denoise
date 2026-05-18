@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"D:\\\\hjx_workspace\\\\scientific_reserach\\\\projects\\\\myEVS\\\\scripts\\\\driving_ED24_alg_evalu\" -Recurse)",
+      "Bash(Select-Object FullName, Length)",
+      "PowerShell(New-Item -ItemType Directory -Force -Path \"data/DND21/mydriving_ED24/MLPF\")"
+    ]
+  }
+}

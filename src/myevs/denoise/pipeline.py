@@ -14,7 +14,9 @@ This module is the executor:
 - It keeps the subtle state-update rules identical to Qt.
 """
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterator, List, Sequence
 
 import numpy as np
@@ -63,6 +65,7 @@ _METHOD_ID_TO_NAME = {
     16: "mlpf",  # MLP-inspired lightweight proxy (cuke-emlb aligned features)
     17: "pfd",  # Polarity-Focused Denoising (PFD/PFDs)
     18: "n149",  # N149 score core (research baseline)
+    19: "stcf_original",  # Original STCF (paper version, polarity-agnostic)
 }
 
 _NAME_TO_METHOD_ID = {v: k for k, v in _METHOD_ID_TO_NAME.items()}
@@ -101,6 +104,7 @@ def _normalize_method_token(token: str) -> str:
         "16": "mlpf",
         "17": "pfd",
         "18": "n149",
+        "19": "stcf_original",
         "rate": "ratelimit",
         "global": "globalgate",
         "dg": "dp",
@@ -121,6 +125,52 @@ def _normalize_method_token(token: str) -> str:
     if t in aliases:
         return aliases[t]
     return t
+
+
+def _resolve_mlpf_native_model(model_path: str, cfg: DenoiseConfig, tb: TimeBase) -> tuple[Path, int, int, bool]:
+    """Resolve the C++ MLPF weight file and metadata.
+
+    The native backend does not link libtorch. It consumes exported NumPy
+    weights plus the same JSON metadata produced by the training script.
+    Passing a `.pt` path is allowed when a same-stem `.npz` export exists.
+    """
+
+    raw = (model_path or "").strip()
+    if not raw:
+        raise ValueError("engine='cpp' method=mlpf requires --mlpf-model pointing to exported .npz weights or a .pt with same-stem .npz")
+
+    p = Path(raw)
+    if p.suffix.lower() == ".npz":
+        weights_path = p
+    else:
+        weights_path = p.with_suffix(".npz")
+
+    if not weights_path.exists():
+        raise FileNotFoundError(
+            f"Missing native MLPF weights: {weights_path}. "
+            f"Export once with: python scripts/export_mlpf_weights.py --model {p}"
+        )
+
+    meta_path = p.with_suffix(".json") if p.suffix.lower() != ".npz" else weights_path.with_suffix(".json")
+    meta = {}
+    if meta_path.exists():
+        with meta_path.open("r", encoding="utf-8") as f:
+            loaded = json.load(f)
+        if isinstance(loaded, dict):
+            meta = loaded
+
+    patch = int(meta.get("patch", int(getattr(cfg, "mlpf_patch", 7) or 7)))
+    if "duration_ticks" in meta:
+        duration_ticks = int(meta["duration_ticks"])
+    else:
+        duration_us = int(meta.get("duration_us", int(getattr(cfg, "time_window_us", 100000) or 100000)))
+        duration_ticks = int(tb.us_to_ticks(duration_us))
+
+    output_type = str(meta.get("output_type", "logit") or "logit").strip().lower()
+    if output_type not in ("logit", "prob", "probability", "sigmoid"):
+        raise ValueError(f"Unsupported MLPF output_type in metadata: {output_type!r}")
+    output_is_prob = output_type in ("prob", "probability", "sigmoid")
+    return weights_path, patch, duration_ticks, output_is_prob
 
 
 def _build_ops(meta: EventStreamMeta, cfg: DenoiseConfig, tb: TimeBase) -> tuple[list[DenoiseOp], GlobalGateOp | None]:
@@ -250,6 +300,10 @@ def denoise_stream(
             native = _native_emlb.StcNative(
                 w, h, int(win_ticks), max(0, int(cfg.radius_px)), max(0, int(cfg.min_neighbors)), show_on, show_off
             )
+        elif token in ("stcf_original", "stc_original"):
+            native = _native_emlb.StcfOriginalNative(
+                w, h, int(win_ticks), max(1, int(cfg.min_neighbors)), show_on, show_off
+            )
         elif token == "baf":
             native = _native_emlb.BafNative(
                 w, h, int(win_ticks), max(0, int(cfg.radius_px)), show_on, show_off
@@ -296,8 +350,44 @@ def denoise_stream(
                 show_on,
                 show_off,
             )
+        elif token == "mlpf":
+            weights_path, patch, duration_ticks, output_is_prob = _resolve_mlpf_native_model(
+                str(getattr(cfg, "mlpf_model_path", "") or ""), cfg, tb
+            )
+            weights = np.load(weights_path)
+            required = ("fc1_weight", "fc1_bias", "fc2_weight", "fc2_bias")
+            missing = [name for name in required if name not in weights]
+            if missing:
+                raise ValueError(f"Native MLPF weight file is missing arrays: {missing}")
+            native = _native_emlb.MlpfNative(
+                w,
+                h,
+                int(duration_ticks),
+                float(cfg.min_neighbors),
+                int(patch),
+                np.ascontiguousarray(weights["fc1_weight"], dtype=np.float32),
+                np.ascontiguousarray(weights["fc1_bias"], dtype=np.float32),
+                np.ascontiguousarray(weights["fc2_weight"], dtype=np.float32),
+                np.ascontiguousarray(weights["fc2_bias"], dtype=np.float32),
+                bool(output_is_prob),
+                show_on,
+                show_off,
+            )
+        elif token == "pfd":
+            pfd_mode_str = str(getattr(cfg, "pfd_mode", "a") or "a").strip().lower()
+            native = _native_emlb.PfdNative(
+                w,
+                h,
+                int(win_ticks),
+                max(1, int(cfg.radius_px)),
+                float(cfg.min_neighbors),
+                max(1, int(cfg.refractory_us)),
+                pfd_mode_str == "b",
+                show_on,
+                show_off,
+            )
         else:
-            raise ValueError("engine='cpp' currently supports stc / baf / ebf / n149 / knoise / ynoise / ts / evflow without pipeline")
+            raise ValueError("engine='cpp' currently supports stc / baf / ebf / n149 / knoise / ynoise / ts / evflow / mlpf / pfd without pipeline")
 
         for b in batches:
             if len(b) == 0:

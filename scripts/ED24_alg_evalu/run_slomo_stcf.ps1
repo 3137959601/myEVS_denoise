@@ -46,7 +46,7 @@ Write-Host "=== STCF slomo: light ==="
 $T0 = Get-Date
 $OUT = "data/ED24/myPedestrain_06/STCF/roc_stcf_light.csv"; [System.IO.File]::WriteAllText($OUT, "")
 foreach ($r in $RADIUS_LIST) {
-  & $PY -m myevs.cli roc --clean $LIGHT_CLEAN --noisy $LIGHT_NOISY --assume npy --width 346 --height 260 --tick-ns $TICK_NS --method stc --radius-px $r --param time-us --values $TAU_LIST --match-us $MATCH_US --match-bin-radius $MATCH_BIN_RADIUS --tag ("stcf_r{0}" -f $r) --out-csv $OUT --append --progress
+  & $PY -m myevs.cli roc --engine cpp --clean $LIGHT_CLEAN --noisy $LIGHT_NOISY --assume npy --width 346 --height 260 --tick-ns $TICK_NS --method stc --radius-px $r --param time-us --values $TAU_LIST --match-us $MATCH_US --match-bin-radius $MATCH_BIN_RADIUS --tag ("stcf_r{0}" -f $r) --out-csv $OUT --append --progress
 }
 & $PY -m myevs.cli plot-csv --in $OUT --out "data/ED24/myPedestrain_06/STCF/roc_stcf_light.png" --x fpr --y tpr --group tag --kind line --xlabel FPR --ylabel TPR --title "STCF ROC (light)"
 $T1 = Get-Date
@@ -56,7 +56,7 @@ Write-Host "=== STCF slomo: mid ==="
 $T0 = Get-Date
 $OUT = "data/ED24/myPedestrain_06/STCF/roc_stcf_mid.csv"; [System.IO.File]::WriteAllText($OUT, "")
 foreach ($r in $RADIUS_LIST) {
-  & $PY -m myevs.cli roc --clean $MID_CLEAN --noisy $MID_NOISY --assume npy --width 346 --height 260 --tick-ns $TICK_NS --method stc --radius-px $r --param time-us --values $TAU_LIST --match-us $MATCH_US --match-bin-radius $MATCH_BIN_RADIUS --tag ("stcf_r{0}" -f $r) --out-csv $OUT --append --progress
+  & $PY -m myevs.cli roc --engine cpp --clean $MID_CLEAN --noisy $MID_NOISY --assume npy --width 346 --height 260 --tick-ns $TICK_NS --method stc --radius-px $r --param time-us --values $TAU_LIST --match-us $MATCH_US --match-bin-radius $MATCH_BIN_RADIUS --tag ("stcf_r{0}" -f $r) --out-csv $OUT --append --progress
 }
 & $PY -m myevs.cli plot-csv --in $OUT --out "data/ED24/myPedestrain_06/STCF/roc_stcf_mid.png" --x fpr --y tpr --group tag --kind line --xlabel FPR --ylabel TPR --title "STCF ROC (mid)"
 $T1 = Get-Date
@@ -66,7 +66,7 @@ Write-Host "=== STCF slomo: heavy ==="
 $T0 = Get-Date
 $OUT = "data/ED24/myPedestrain_06/STCF/roc_stcf_heavy.csv"; [System.IO.File]::WriteAllText($OUT, "")
 foreach ($r in $RADIUS_LIST) {
-  & $PY -m myevs.cli roc --clean $HEAVY_CLEAN --noisy $HEAVY_NOISY --assume npy --width 346 --height 260 --tick-ns $TICK_NS --method stc --radius-px $r --param time-us --values $TAU_LIST --match-us $MATCH_US --match-bin-radius $MATCH_BIN_RADIUS --tag ("stcf_r{0}" -f $r) --out-csv $OUT --append --progress
+  & $PY -m myevs.cli roc --engine cpp --clean $HEAVY_CLEAN --noisy $HEAVY_NOISY --assume npy --width 346 --height 260 --tick-ns $TICK_NS --method stc --radius-px $r --param time-us --values $TAU_LIST --match-us $MATCH_US --match-bin-radius $MATCH_BIN_RADIUS --tag ("stcf_r{0}" -f $r) --out-csv $OUT --append --progress
 }
 & $PY -m myevs.cli plot-csv --in $OUT --out "data/ED24/myPedestrain_06/STCF/roc_stcf_heavy.png" --x fpr --y tpr --group tag --kind line --xlabel FPR --ylabel TPR --title "STCF ROC (heavy)"
 $T1 = Get-Date
