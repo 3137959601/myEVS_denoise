@@ -10,3 +10,4 @@
 #include "time_surface/time_surface_native.hpp"
 #include "event_flow/event_flow_native.hpp"
 #include "n149/n149_native.hpp"
+#include "n149/n149_rtl_fixed_native.hpp"

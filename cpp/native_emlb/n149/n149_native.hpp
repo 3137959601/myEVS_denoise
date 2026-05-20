@@ -67,6 +67,22 @@ public:
         return out;
     }
 
+    py::array_t<double> score_batch(
+        py::array_t<uint64_t, py::array::c_style | py::array::forcecast> t,
+        py::array_t<int32_t, py::array::c_style | py::array::forcecast> x,
+        py::array_t<int32_t, py::array::c_style | py::array::forcecast> y,
+        py::array_t<int8_t, py::array::c_style | py::array::forcecast> p) {
+        auto tb = t.unchecked<1>(); auto xb = x.unchecked<1>(); auto yb = y.unchecked<1>(); auto pb = p.unchecked<1>();
+        const auto n = tb.shape(0);
+        if (xb.shape(0) != n || yb.shape(0) != n || pb.shape(0) != n)
+            throw std::invalid_argument("t/x/y/p arrays must have the same length");
+        py::array_t<double> out(n);
+        auto ob = out.mutable_unchecked<1>();
+        for (py::ssize_t i = 0; i < n; ++i)
+            ob(i) = score_one(xb(i), yb(i), norm_pol(pb(i)), tb(i));
+        return out;
+    }
+
 private:
     uint64_t tau_; int radius_; double threshold_; double sigma_;
     int hot_bits_; int32_t hot_mask_;

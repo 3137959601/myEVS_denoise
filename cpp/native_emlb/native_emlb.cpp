@@ -73,8 +73,18 @@ PYBIND11_MODULE(_native_emlb, m) {
              py::arg("show_on") = true, py::arg("show_off") = true)
         .def("accept_batch", &myevs_native_emlb::N149Native::accept_batch,
              py::arg("t"), py::arg("x"), py::arg("y"), py::arg("p"))
-        .def("score_batch", &myevs_native_emlb::N149Native::accept_batch,
+        .def("score_batch", &myevs_native_emlb::N149Native::score_batch,
              py::arg("t"), py::arg("x"), py::arg("y"), py::arg("p"))
         .def("reset", &myevs_native_emlb::N149Native::reset);
+
+    py::class_<myevs_native_emlb::N149RtlFixedNative>(m, "N149RtlFixedNative")
+        .def(py::init<int, int, uint64_t, int, uint64_t, bool, bool>(),
+             py::arg("width"), py::arg("height"), py::arg("tau_ticks"), py::arg("radius"), py::arg("thr_ticks"),
+             py::arg("show_on") = true, py::arg("show_off") = true)
+        .def("accept_batch", &myevs_native_emlb::N149RtlFixedNative::accept_batch,
+             py::arg("t"), py::arg("x"), py::arg("y"), py::arg("p"))
+        .def("score_batch", &myevs_native_emlb::N149RtlFixedNative::score_batch,
+             py::arg("t"), py::arg("x"), py::arg("y"), py::arg("p"))
+        .def("reset", &myevs_native_emlb::N149RtlFixedNative::reset);
 
 }
