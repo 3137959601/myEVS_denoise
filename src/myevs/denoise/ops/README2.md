@@ -1,7 +1,111 @@
 # README2：回归 N149 后的复核、消融与实时性实验
 
 > 修改本文件前，必须先阅读 `src/myevs/denoise/ops/README.md`。
-> `README.md` 记录历史数据集路径、脚本约定、已有结果和结论；`README2.md` 只记录从"放弃 N179 系列主线、回归 N149 主线"之后的新复核、新消融和实时性实验。
+> `README.md` 记录历史数据集路径、脚本约定、已有结果和结论；`README2.md` 只记录从“放弃 N179 系列主线、回归 N149 主线”之后的新复核、新消融和实时性实验。
+
+## 0. Driving BAF 论文 profile 固化
+
+本节记录 2026-05-19 对 Driving BAF 论文口径的复核。BAF 论文 profile 一律固定为 `radius=1`、3x3 NNb、排除自身、`polarity=ignored`，AUC 使用工程默认 paper convention：positive=signal、predicted positive=kept，并补 ROC 端点 `(0,0)`、`(1,1)`。same-polarity BAF 只能作为 diagnostic，不能进入论文 BAF 对比表。
+
+新增脚本：
+
+```powershell
+python scripts/driving_alg_evalu/evaluate_baf_paper_profiles.py
+```
+
+默认扫描 `D:/hjx_workspace/scientific_reserach/dataset/DND21` 下的四套 Driving：`mydriving_ED24`、`mydriving_cov05`、`mydriving_paper`、`mydriving_jaer`。输出目录为 `data/DND21/baf_paper_profiles/`：
+
+| 文件 | 用途 |
+|---|---|
+| `REPORT.md` | 人读报告，含固定 BAF 语义、v2e COV 说明、dataset manifest、AUC summary、closest rows |
+| `dataset_manifest.csv` | 每个数据文件的 requested Hz、label-count actual Hz/pixel、事件数、signal/noise 数 |
+| `baf_profile_summary.csv` | 每个 dataset/profile/Hz 的 AUC 与论文 target delta |
+| `baf_profile_roc_points.csv` | 每个 tau 点的 TP/FP/TN/FN/TPR/FPR |
+| `missing_inputs.csv` | 缺失输入；当前 ED24 缺 `10hz` converted npy |
+
+三套 profile 分开使用，后续不能把 sweep 混在一起解释：
+
+| profile | 固定口径 | tau sweep | 对齐目标 |
+|---|---|---|---|
+| `baf_dnd21_original` | radius=1, polarity ignored, self excluded | dense `1..100 ms` | DND21 原论文 5Hz/trend |
+| `baf_edformer` | radius=1, polarity ignored, self excluded | dense `2..200 ms` | EDformer Table 2 Driving |
+| `baf_ebf_source` | radius=1, polarity ignored, self excluded | `1,5,10,15,20,25,30,40,50 ms` | EBF Table II / source grid |
+
+本轮结果摘要：
+
+| dataset | requested/actual Hz 关系 | EDformer profile BAF AUC | EBF profile BAF AUC | 初步判断 |
+|---|---|---|---|---|
+| `mydriving_ED24` | 1/3/5/7Hz 的 label-count actual 约 0.65/1.94/3.25/4.53Hz | 0.9168/0.8953/0.8755/0.8615 | 0.9129/0.8883/0.8619/0.8481 | 明显高于 EDformer/EBF BAF，不能作为论文 BAF 锚点 |
+| `mydriving_cov05` | 1/3/5/7/10Hz 的 actual 约 0.75/2.26/3.77/5.27/7.54Hz | 0.8616/0.8397/0.8229/0.8084/0.7901 | 0.8593/0.8373/0.8201/0.8053/0.7869 | 1/3Hz 最接近论文，整体仍高于表值 |
+| `mydriving_paper` | 1/3/5Hz 的 actual 约 1.00/3.00/5.00Hz | 0.8739/0.8424/0.8186 | 0.8716/0.8397/0.8154 | 3/5Hz 接近 cov05，1Hz 偏高 |
+| `mydriving_jaer` | 1/3/5Hz 的 actual 约 1.00/3.00/5.00Hz；原始 `tick_ns=12.5`，必须先转微秒 | 0.8724/0.8424/0.8192 | 0.8700/0.8398/0.8161 | 与 `mydriving_paper` 几乎一致，Jaer 不是论文差异主因 |
+
+论文锚点：EDformer Driving BAF 为 `0.8479/0.8155/0.7930/0.7732/0.7479`，EBF Driving BAF 为 `0.848/0.816/0.793`。按当前固定口径，`mydriving_cov05` 是第一候选锚点；`mydriving_paper` 可作为 DND21 clean + Python FPN shot noise 对照；`mydriving_ED24` 的 BAF 与论文差距过大，后续不优先用于 EDformer/EBF 论文指标对齐。
+
+v2e COV 说明：当前本地 v2e 源码中 `noise_rate_cov_decades` 的 help 写着“currently only in leak events”，`emulator.py` 的 log-normal `noise_rate_array` 初始化位于 `leak_rate_hz > 0` 分支，默认 shot-noise 路径没有直接使用该参数。因此报告中必须区分“v2e 参数记录为 COV=0.5”和“实际 shot-noise FPN 是否由该参数生效”。暂不补做 rate-calibrated v2e 数据。
+
+源码复核补充：
+
+- EDformer `eval_auc.py`/`eval_auc_new.py` 直接读取 `*_mix_result.txt` 第 5 列 label，并调用 `roc_curve(event_label, label_pred_stacked)`；它不通过 clean/noisy subtraction 重新打标签。
+- EDformer 训练和 MESR 评估显示模型 sigmoid 输出更像 noise 概率：`eval_mesr.py` 阈值化后保留 `predictions == 0` 的事件；因此原始 EDformer txt 通常按 `0=signal, 1=noise` 理解，而 myEVS npy 统一转换为 `1=signal, 0=noise`。
+- EBF 源码 `ebf1231retest.py` 对 txt 输入有 `e_data[:,0] = 1 - e_data[:,0]`，注释为“signal noise label 是反的”；`otherfiltersweep250215eccv.py` 对旧规则滤波器用 `confusion_matrix(1-ytrue, ypred)`，与上面的 txt label 反转一致。
+- EBF 源码中的 ECCV/EDformer BAF grid 为 `1,5,10,15,20,25,30,40,50 ms`，并手工加入 ROC 端点；myEVS 的 `baf_ebf_source` profile 与这个 grid 对齐。
+- Jaer 数据集的 labeled npy 来自 aedat，metadata 为 `tick_ns=12.5`；用普通 `--tick-ns 1000` 或把 timestamp 当微秒会严重压低 BAF AUC。`evaluate_baf_paper_profiles.py` 已按 metadata 转微秒。
+
+关于视频长度：当前 ED24 converted txt 的时间跨度约 `5.976s`，`mydriving_cov05` 约 `5.9999s`，`mydriving_paper/jaer` 约 `5.98s`。官方下载视频即使肉眼看约 3s，v2e/慢放参数或已发布 txt 事件流已经是近 6s；当前 BAF 差异不是“少了一半视频”导致的。
+
+EDformer 官方模型复现入口已新增：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/EDformer_official/run_official_driving_auc.ps1 `
+  -Python D:/software/Anaconda_envs/envs/myEVS/python.exe `
+  -EdformerRoot D:/hjx_workspace/scientific_reserach/EDformer `
+  -BasePath D:/hjx_workspace/scientific_reserach/dataset/DND21/mydriving_ED24 `
+  -Hz 1,3,5,7,10 -Device auto -CheckEnv
+```
+
+当前本机 check-env 结果：`torch/sklearn/pandas/numpy` 可用，但缺 `sparseconvnet`、`pytorch3d`、`dv_processing`，因此不能在本机完成官方 EDformer 推理。服务器上使用 EDformer 论文环境运行：
+
+```bash
+EDFORMER_ROOT=/path/to/EDformer \
+BASE_PATH=/path/to/mydriving_ED24 \
+DEVICE=cuda:0 \
+HZ=1,3,5,7,10 \
+bash scripts/EDformer_official/run_official_driving_auc.sh
+```
+
+输出写到 `data/DND21/edformer_official_auc/driving_auc_official.csv` 或 wrapper 指定的 `driving_auc_<xy_mode>.csv`。主指标列为 `auc_official_label1_positive`，它等价于 EDformer `eval_auc.py` 的 `roc_curve(event_label, sigmoid_output)`；`auc_label_inverted_diagnostic` 只用于诊断 label 是否反了。`--xy-mode official` 保持 EDformer release 代码的 x/y 输入方式；`--xy-mode unit` 只作为坐标归一化诊断，不进入官方复现表。
+
+EDformer Driving txt + myEVS BAF 的 label-direct AUC 入口：
+
+```powershell
+D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/EDformer_official/eval_official_driving_baf_auc.py `
+  --base-path D:/hjx_workspace/scientific_reserach/dataset/DND21/mydriving_ED24 `
+  --filename driving_mix_result.txt `
+  --hz 1,3,5,7,10
+```
+
+该脚本不跑 EDformer 网络，只复用 EDformer 的 `driving_mix_result.txt` 与原始 label 语义 `0=signal, 1=noise`，再用 myEVS BAF 规则计算 AUC。输出目录：`data/DND21/edformer_official_auc/baf_on_driving_mix/`。主表为 `summary.csv`。
+
+直接结果：
+
+| Hz | myEVS BAF on `driving_mix_result.txt` | EDformer Table 2 BAF | delta |
+|---:|---:|---:|---:|
+| 1 | 0.916803 | 0.8479 | +0.0689 |
+| 3 | 0.895301 | 0.8155 | +0.0798 |
+| 5 | 0.875487 | 0.7930 | +0.0825 |
+| 7 | 0.861476 | 0.7732 | +0.0883 |
+| 10 | 0.840145 | 0.7479 | +0.0922 |
+
+诊断结论：
+
+- `driving_mix_result.txt` raw label-direct 与 converted npy 的 1/3/5/7Hz BAF AUC 完全一致，说明差异不是 myEVS txt->npy 转换造成的。
+- `mix_result.txt` 的 BAF 更高：`0.9706/0.9456/0.9232/0.9043/0.8803`，因此它不是 Driving BAF 表的来源。
+- include-self 诊断仍偏高：`0.9133/0.8902/0.8691/0.8544/0.8319`，不能解释论文表。
+- `tau-scale-us=1` 会过低，`tau-scale-us=100/250/500` 也不能整体贴近论文表，说明不是简单的 ms/us 缩放错误。
+- 因此当前更像是 EDformer Table 2 的 BAF baseline 并非由本地 `mydriving_ED24/driving_mix_result.txt` 按标准 3x3 BAF 直接算出，或者论文 baseline 的 BAF 实现/数据版本还有未公开差异。
+
+下一步只在 BAF 锚点数据集上推进其他算法对齐：先以 `mydriving_cov05` 跑 EBF/EDformer/N149；若 BAF 差距仍不能解释，再检查 v2e shot noise 生成链路或 EDformer 发布数据的实际来源。所有新评估优先使用 label-direct AUC；clean/noisy subtraction 只作为数据生成诊断，不能作为 EDformer/EBF 论文 AUC 主口径。
 
 ## 1. 当前主线
 
@@ -280,7 +384,8 @@ $PY -m myevs.cli roc `
 | `EBF` | `cpp` | 0.9484 | 0.9692 | ebf_r2_tau32000 | |
 | `YNoise` | `cpp` | 0.9408 | 0.9679 | ynoise_r2_tau16000 | |
 | `N149` | `cpp` | 0.9381 | 0.9666 | n149_r2_tau32000 | |
-| `N149_v2.1` | `cpp` | 0.9370 | 0.9627 | v21_16b_r2_tau32K | **最新 v2.1 16-bit** |
+| `N149_v2.1` | `cpp` | 0.9370 | 0.9627 | v21_16b_r2_tau32K | v2.1 |
+| **N149_v2.2** | cpp | **0.9510** | 0.9678 | v22_16b_r2_tau32K_a0 | **v2.2** alpha=0 |
 | `N149_v2` | `cpp` | 0.9367 | 0.9666 | n149v2_r2_tau32000 | v2, 点检 |
 | `TS` | `cpp` | 0.9298 | 0.9668 | ts_r2_decay32000 | |
 | `BAF` | `cpp` | 0.9166 | 0.9589 | baf_r1 | |
@@ -299,7 +404,8 @@ $PY -m myevs.cli roc `
 | `YNoise` | `cpp` | 0.9390 | 0.9036 | ynoise_r2_tau16000 | |
 | `N149` | `cpp` | 0.9386 | 0.9437 | n149_r2_tau32000 | 对齐 EBF 阈值 |
 | `N149_v2` | `cpp` | 0.9375 | 0.9437 | n149v2_r2_tau32000 | v2, 点检 |
-| `N149_v2.1` | `cpp` | 0.9377 | 0.9441 | v21_16b_r2_tau32K | **最新 v2.1 16-bit** |
+| `N149_v2.1` | `cpp` | 0.9377 | 0.9441 | v21_16b_r2_tau32K | v2.1 |
+| **N149_v2.2** | cpp | **0.9503** | 0.9518 | v22_16b_r2_tau32K_a0 | **v2.2** alpha=0 |
 | `TS` | `cpp` | 0.9322 | 0.7412 | ts_r2_decay16000 | |
 | `PFD` | `cpp` | 0.9111 | 0.9023 | pfd_r3_tau8000_m2 | |
 | `BAF` | `cpp` | 0.9029 | 0.9163 | baf_r1 | |
@@ -314,7 +420,8 @@ $PY -m myevs.cli roc `
 | `STCF` | `cpp` | 0.9400 | 0.9312 | stcf_r2 | |
 | `N149` | `cpp` | 0.9394 | 0.9314 | n149_r2_tau32000 | |
 | `N149_v2` | `cpp` | — | — | — | 待测 |
-| `N149_v2.1` | `cpp` | 0.9377 | 0.9314 | v21_16b_r2_tau32K | **最新 v2.1 16-bit** |
+| `N149_v2.1` | `cpp` | 0.9377 | 0.9314 | v21_16b_r2_tau32K | v2.1 |
+| **N149_v2.2** | cpp | **0.9495** | 0.9401 | v22_16b_r2_tau32K_a0 | **v2.2** alpha=0 |
 | `YNoise` | `cpp` | 0.9361 | 0.9347 | ynoise_r2_tau16000 | |
 | `TS` | `cpp` | 0.9279 | 0.9309 | ts_r2_decay32000 | |
 | `STCF_orig` | `cpp` | 0.9075 | 0.9307 | stcfo_2hz_tau16ms_k2 | |
@@ -329,7 +436,8 @@ $PY -m myevs.cli roc `
 |---|---:|---:|---:|---|---|
 | `N149` | `cpp` | 0.9416 | 0.9092 | n149_r2_tau32000 | 高噪声最优 |
 | `N149_v2` | `cpp` | 0.9410 | 0.9092 | n149v2_r2_tau32000 | v2, 点检 |
-| `N149_v2.1` | `cpp` | 0.9412 | 0.9085 | v21_16b_r2_tau32K | **最新 v2.1 16-bit** |
+| `N149_v2.1` | `cpp` | 0.9412 | 0.9085 | v21_16b_r2_tau32K | v2.1 |
+| **N149_v2.2** | cpp | **0.9491** | 0.9197 | v22_16b_r2_tau32K_a0 | **v2.2** alpha=0 |
 | `EBF` | `cpp` | 0.9408 | 0.9128 | ebf_r2_tau32000 | |
 | `YNoise` | `cpp` | 0.9312 | 0.9090 | ynoise_r2_tau16000 | |
 | `STCF` | `cpp` | 0.9309 | 0.9008 | stcf_r1 | |
@@ -347,7 +455,8 @@ $PY -m myevs.cli roc `
 |---|---:|---:|---:|---|---|
 | **`N149`** | `cpp` | **0.9418** | 0.8221 | n149_r2_tau32000 | **8hz 最优** |
 | `N149_v2` | `cpp` | 0.9414 | 0.8221 | n149v2_r2_tau32000 | v2, 点检 |
-| `N149_v2.1` | `cpp` | 0.9416 | 0.8833 | v21_16b_r2_tau32K | **最新 v2.1 16-bit** |
+| `N149_v2.1` | `cpp` | 0.9416 | 0.8833 | v21_16b_r2_tau32K | v2.1 |
+| **N149_v2.2** | cpp | **0.9471** | 0.8956 | v22_16b_r2_tau32K_a0 | **v2.2** alpha=0 |
 | `EBF` | `cpp` | 0.9374 | 0.7618 | ebf_r2_tau32000 | |
 | `TS` | `cpp` | 0.9291 | 0.7428 | ts_r2_decay16000 | |
 | `YNoise` | `cpp` | 0.9252 | 0.8755 | ynoise_r2_tau16000 | |
@@ -378,14 +487,15 @@ $PY -m myevs.cli roc `
 | 3 | YNoise | 0.9408 | YNoise | 0.9390 | YNoise | 0.9312 | TS | 0.9291 |
 | 4 | N149 | 0.9381 | N149 | 0.9386 | STCF | 0.9309 | YNoise | 0.9252 |
 | 5 | TS | 0.9298 | TS | 0.9322 | TS | 0.9259 | STCF | 0.9229 |
-| — | **v2.1** | **0.9370** | **v2.1** | **0.9377** | **v2.1** | **0.9412** | **v2.1** | **0.9416** |
+| — | **v2.2** | **0.9510** | **v2.2** | **0.9503** | **v2.2** | **0.9491** | **v2.2** | **0.9471** |
+| — | v2.1 | 0.9370 | v2.1 | 0.9377 | v2.1 | 0.9412 | v2.1 | 0.9416 |
 | 6 | BAF | 0.9166 | PFD | 0.9111 | MLPF | 0.9012 | MLPF | 0.9061 |
 | 7 | PFD | 0.9135 | BAF | 0.9029 | PFD | 0.8984 | PFD | 0.8825 |
 | 8 | MLPF | 0.8632 | MLPF | 0.8772 | BAF | 0.8651 | BAF | 0.8379 |
 | 9 | EvFlow | 0.8486 | EvFlow | 0.8475 | EvFlow | 0.8206 | EvFlow | 0.8060 |
 | 10 | KNoise | 0.6359 | KNoise | 0.6265 | KNoise | 0.6239 | KNoise | 0.6214 |
 
-> N149 在 5hz/8hz 高噪声端排名第一。EBF 在 1hz/2hz 低中噪声端最优。
+> **N149 v2.2 (α=0) 在 Driving 全 4 级均排名第一**，显著超越原始 N149 (+0.005~+0.013) 和 EBF。α=0（仅同极计数+空间高斯+平方时间核）是 Driving 场景的最优配置。
 
 ### 7.8 ED24 Pedestrian (myPedestrain_06)
 
@@ -393,7 +503,8 @@ $PY -m myevs.cli roc `
 |---|---:|---:|---:|---|---|
 | `N149` | **0.9565** | **0.9469** | **0.9406** | (5,256ms) | 全级最优 |
 | `N149_v2` | 0.9551 | 0.9453 | 0.9388 | (5,256ms) | v2, 点检 |
-| `N149_v2.1` | 0.9545 | 0.9432 | 0.9360 | (5,256ms) | **最新 v2.1 16-bit** |
+| `N149_v2.1` | 0.9545 | 0.9432 | 0.9360 | (5,256ms) | v2.1 |
+| **N149_v2.2** | 0.9561 | — | 0.9346 | (5,256ms) | **v2.2** alpha=0.25 |
 | `STCF` | 0.9460 | 0.8962 | 0.8791 | (4,256ms) | |
 | `EBF` | 0.9416 | 0.9185 | 0.9099 | (5,128ms) | |
 | `YNoise` | 0.9227 | 0.9083 | 0.8971 | (4,64ms) | |
@@ -410,7 +521,8 @@ $PY -m myevs.cli roc `
 |---|---:|---:|---:|---|---|
 | `N149` | **0.9845** | **0.9827** | **0.9787** | (5,512ms) | 全级最优 |
 | `N149_v2` | 0.9850 | 0.9832 | 0.9796 | (5,512ms) | v2, 点检 |
-| `N149_v2.1` | 0.9840 | 0.9822 | 0.9778 | (5,512ms) | **最新 v2.1 16-bit** |
+| `N149_v2.1` | 0.9840 | 0.9822 | 0.9778 | (5,512ms) | v2.1 |
+| **N149_v2.2** | 0.9840 | 0.9815 | 0.9763 | (5,512ms) | **v2.2** alpha=0.25 |
 | `STCF` | 0.9785 | 0.9649 | 0.9418 | (4,32ms) | |
 | `EBF` | 0.9681 | 0.9621 | 0.9422 | (5,512ms) | |
 | `YNoise` | 0.9601 | 0.9417 | 0.7859 | (5,256ms) | |
@@ -429,7 +541,8 @@ $PY -m myevs.cli roc `
 |---|---:|---:|---:|---|---|
 | `N149` | `cpp` | 0.9970 | 0.9900 | (5, 128ms) | 最优 |
 | `N149_v2` | `cpp` | 0.9978 | — | (5, 128ms) | v2, 点检 |
-| `N149_v2.1` | `cpp` | 0.9978 | — | (5, 128ms) | **最新 v2.1 16-bit** |
+| `N149_v2.1` | `cpp` | 0.9978 | — | (5, 128ms) | v2.1 |
+| **N149_v2.2** | cpp | 0.9975 | — | (5,128ms) | **v2.2** alpha=0.25 |
 | `EBF` | `cpp` | 0.9940 | 0.9843 | (4, 64ms) | |
 | `YNoise` | `cpp` | 0.9934 | 0.9836 | (4, 32ms) | |
 | `STCF` | `cpp` | 0.9898 | 0.9772 | (3, 32ms) | |
@@ -447,7 +560,8 @@ $PY -m myevs.cli roc `
 |---|---:|---:|---:|---|---|
 | `N149` | `cpp` | 0.9133 | 0.9091 | (2, 16ms) | |
 | `N149_v2` | `cpp` | 0.9162 | 0.9091 | (2, 16ms) | v2, 点检 |
-| `N149_v2.1` | `cpp` | 0.9162 | 0.9784 | (2, 16ms) | **最新 v2.1 16-bit** |
+| `N149_v2.1` | `cpp` | 0.9162 | 0.9784 | (2, 16ms) | v2.1 |
+| **N149_v2.2** | cpp | 0.9174 | 0.9784 | (2,16ms) | **v2.2** alpha=1.0 |
 | `STCF_orig` | `cpp` | 0.8987 | 0.9646 | (1, 8ms, k=1) | |
 | `YNoise` | `cpp` | 0.8875 | 0.8862 | (2, 8ms) | |
 | `STCF` | `cpp` | 0.8841 | 0.8704 | (2, 4ms) | |
