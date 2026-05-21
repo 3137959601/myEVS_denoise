@@ -38,7 +38,7 @@ $SPLITS = @(
   @{ Name = "heavy"; Noisy = "Pedestrain_06_3.3.npy"; Clean = "Pedestrain_06_3.3_signal_only.npy" }
 )
 
-$ALL_ALGS = @("knoise", "evflow", "ynoise", "ts", "mlpf", "pfd")
+$ALL_ALGS = @("stcf", "knoise", "evflow", "ynoise", "ts", "mlpf", "pfd")
 
 function Resolve-Algorithms {
   param(
@@ -330,7 +330,17 @@ foreach ($alg in $SELECTED_ALGS) {
     Write-Host ("=== {0} ED24 {1} ===" -f $alg, $sp.Name)
     $t0 = Get-Date
 
-    switch ($alg) {      "knoise" {
+    switch ($alg) {
+      "stcf" {
+        # Original STCF: fixed 3x3 neighborhood (radius=1), each K is one ROC curve (sweep tau).
+        $tauList = if ($IS_DENSE) { "500,1000,2000,4000,8000,16000,32000,64000,128000,256000,512000" } else { "1000,2000,4000,8000,16000,32000,64000,128000,256000,512000" }
+        $kList = if ($IS_DENSE) { "1,2,3,4,5,6,7,8" } else { "1,2,3,4,5,6" }
+        foreach ($k in ($kList -split ",")) {
+          & $PY -m myevs.cli roc --clean $clean --noisy $noisy --assume npy --width 346 --height 260 --tick-ns $TICK_NS --engine cpp --method stcf_original --radius-px 1 --min-neighbors $k --param time-us --values $tauList --match-us $MATCH_US --match-bin-radius $MATCH_BIN_RADIUS --tag ("stcf_orig_k{0}" -f $k) --out-csv $outCsv --append --progress
+          if ($LASTEXITCODE -ne 0) { throw "myevs roc failed for stcf_original k=$k" }
+        }
+      }
+      "knoise" {
         # ========================= TUNE_HERE: KNOISE sweep =========================
         # Standard ROC: fixed tau, sweep threshold.
         $knoiseTauList = @(16000, 32000, 64000, 128000, 256000)
@@ -426,12 +436,12 @@ foreach ($alg in $SELECTED_ALGS) {
       "pfd" {
         # =========================== TUNE_HERE: PFD sweep ===========================
         # NOTE:
-        # - Keep radius fixed to r=3 (empirical best on current ED24 setting).
+        # - Keep radius fixed to r=1 (source-aligned 3x3 neighborhood).
         # - Sweep delta_t(time-us), lambda(min-neighbors), m(refractory-us).
         # - Use mode A for ED24 baseline; mode B is implemented but not run here.
         $thr = if ($IS_DENSE) { New-IntRangeCsv -Start 0 -End 10 -Step 1 } else { "1,2,3,4,5,6,7,8" }
-        $r = 3
-        $tauList = if ($IS_DENSE) { @(8000,12000,16000,24000,32000,48000,64000,96000,128000,192000,256000) } else { @(8000, 16000, 32000, 64000, 128000, 256000) }
+        $r = 1
+        $tauList = if ($IS_DENSE) { @(8000,12000,16000,24000,32000,48000,64000,96000,128000,192000,256000) } else { @(8000,16000,32000,64000,128000,256000) }
         $mList = if ($IS_DENSE) { @(1,2,3,4) } else { @(1,2,3) }
         foreach ($m in $mList) {
           foreach ($tau in $tauList) {
@@ -445,6 +455,10 @@ foreach ($alg in $SELECTED_ALGS) {
     if ($alg -in @("evflow", "ynoise", "ts", "pfd")) {
       $topTags = Get-TopTagsByRadius -CsvPath $outCsv -TopNPerRadius 3
       $plotCsv = Join-Path $outDir ("roc_{0}_{1}_top3_per_r.csv" -f $alg, $sp.Name)
+      Export-FilteredCsv -InCsv $outCsv -Tags $topTags -OutCsv $plotCsv
+    } elseif ($alg -eq "stcf") {
+      $topTags = Get-TopTagsGlobal -CsvPath $outCsv -TopN 3
+      $plotCsv = Join-Path $outDir ("roc_{0}_{1}_top3_k.csv" -f $alg, $sp.Name)
       Export-FilteredCsv -InCsv $outCsv -Tags $topTags -OutCsv $plotCsv
     } elseif ($alg -eq "mlpf") {
       $topTags = Get-TopTagsGlobal -CsvPath $outCsv -TopN 4
@@ -469,3 +483,5 @@ foreach ($alg in $SELECTED_ALGS) {
 
   Write-Host ("=== DONE: ED24 {0} ===" -f $alg)
 }
+
+

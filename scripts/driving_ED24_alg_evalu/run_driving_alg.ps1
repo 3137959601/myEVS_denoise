@@ -8,7 +8,8 @@
   [ValidateSet("auto", "python", "numba", "cpp")]
   [string]$Engine = "auto",
   [ValidateSet("coarse", "dense")]
-  [string]$SweepProfile = "coarse"
+  [string]$SweepProfile = "coarse",
+  [switch]$PaperAligned
 )
 
 $ErrorActionPreference = "Stop"
@@ -30,9 +31,19 @@ $HEIGHT = 260
 $IS_DENSE = ($SweepProfile.ToLower() -eq "dense")
 
 $LEVELS = @(
+  @{ Name = "1hz"; Dir = Join-Path $DatasetRoot ("driving_noise_1hz_{0}" -f $DatasetSuffix) },
   @{ Name = "2hz"; Dir = Join-Path $DatasetRoot ("driving_noise_2hz_{0}" -f $DatasetSuffix) },
-  @{ Name = "8hz"; Dir = Join-Path $DatasetRoot ("driving_noise_8hz_{0}" -f $DatasetSuffix) }
+  @{ Name = "3hz"; Dir = Join-Path $DatasetRoot ("driving_noise_3hz_{0}" -f $DatasetSuffix) },
+  @{ Name = "5hz"; Dir = Join-Path $DatasetRoot ("driving_noise_5hz_{0}" -f $DatasetSuffix) },
+  @{ Name = "7hz"; Dir = Join-Path $DatasetRoot ("driving_noise_7hz_{0}" -f $DatasetSuffix) },
+  @{ Name = "8hz"; Dir = Join-Path $DatasetRoot ("driving_noise_8hz_{0}" -f $DatasetSuffix) },
+  @{ Name = "10hz"; Dir = Join-Path $DatasetRoot ("driving_noise_10hz_{0}" -f $DatasetSuffix) }
 )
+$LEVELS = @($LEVELS | Where-Object {
+  if (Test-Path $_.Dir) { return $true }
+  Write-Host ("WARN: dataset level missing, skip: {0}" -f $_.Dir)
+  return $false
+})
 $ALL_ALGS = @("baf", "stcf", "ebf", "n149", "knoise", "evflow", "ynoise", "ts", "mlpf", "pfd")
 $CPP_ALGS = @("baf", "stcf", "ebf", "n149", "knoise", "evflow", "ynoise", "ts", "mlpf", "pfd")
 $AUTO_CPP_ALGS = @("baf", "stcf", "ebf", "n149", "knoise", "evflow", "ynoise", "ts", "pfd")
@@ -299,6 +310,9 @@ if ($MaxEvents -gt 0) {
 $SELECTED_ALGS = Resolve-Algorithms -Algorithm $Algorithm -Algorithms $Algorithms
 Write-Host ("Selected algorithms: {0}" -f ($SELECTED_ALGS -join ", "))
 Write-Host ("Engine policy: {0} (auto => baf/stcf/ebf/n149/knoise/evflow/ynoise/ts/pfd use cpp; mlpf uses python unless -Engine cpp is requested)" -f $Engine)
+if ($PaperAligned) {
+  Write-Host "Paper-aligned mode: ON (BAF/YNoise/TS/KNoise fixed defaults + sweep t=2..200ms)"
+}
 
 foreach ($alg in $SELECTED_ALGS) {
 $algEngine = Resolve-EngineForAlg -Alg $alg -RequestedEngine $Engine
@@ -314,7 +328,9 @@ foreach ($lv in $LEVELS) {
 
   # Driving-ED24 output layout aligned to ED24 style:
   # data/DND21/mydriving_ED24/{ALG}/roc_{alg}_{level}.csv
-  $outDir = "data/DND21/mydriving_ED24/{0}" -f $alg.ToUpper()
+  # Keep STCF original in STCFO folder to distinguish from STCF variant.
+  $outDirName = if ($alg -eq "stcf") { "STCFO" } else { $alg.ToUpper() }
+  $outDir = "data/DND21/mydriving_ED24/{0}" -f $outDirName
   New-Item -ItemType Directory -Force -Path $outDir | Out-Null
   $outCsvBase = Join-Path $outDir ("roc_{0}_{1}.csv" -f $alg, $lv.Name)
   $outCsv = $outCsvBase
@@ -342,35 +358,47 @@ foreach ($lv in $LEVELS) {
 
   switch ($alg) {
     "baf" {
-      # Narrowed: best r=1-2, tau=1K-16K based on prior driving results
-      $tauList = if ($IS_DENSE) { "1000,2000,4000,8000,12000,16000,24000,32000" } else { "1000,2000,4000,8000,16000,32000" }
-      foreach ($r in @(1,2,3)) {
-        & $PY -m myevs.cli roc `
-          --clean $clean --noisy $noisy `
-          --assume npy --width $WIDTH --height $HEIGHT `
-          --tick-ns $TICK_NS `
-          --engine $algEngine `
-          --method baf --radius-px $r --min-neighbors 1 `
-          --param time-us --values $tauList `
-          --match-us $MATCH_US --match-bin-radius $MATCH_BIN_RADIUS `
-          --tag ("baf_r{0}" -f $r) --out-csv $outCsv --append --progress
-        if ($LASTEXITCODE -ne 0) { throw "myevs roc failed for baf r=$r" }
+      # Source-aligned BAF: fixed radius=1 (3x3 neighborhood, polarity ignored).
+      $tauList = if ($PaperAligned) {
+        "2000,5000,10000,15000,20000,25000,30000,40000,50000,64000,80000,100000,128000,160000,200000"
+      } elseif ($IS_DENSE) {
+        "1000,2000,4000,8000,12000,16000,24000,32000"
+      } else {
+        "1000,2000,4000,8000,16000,32000"
       }
+      & $PY -m myevs.cli roc `
+        --clean $clean --noisy $noisy `
+        --assume npy --width $WIDTH --height $HEIGHT `
+        --tick-ns $TICK_NS `
+        --engine $algEngine `
+        --method baf --radius-px 1 --min-neighbors 1 `
+        --param time-us --values $tauList `
+        --match-us $MATCH_US --match-bin-radius $MATCH_BIN_RADIUS `
+        --tag "baf_r1" --out-csv $outCsv --append --progress
+      if ($LASTEXITCODE -ne 0) { throw "myevs roc failed for baf r=1" }
     }
     "stcf" {
-      # Narrowed: best r=1-2, tau=2K-64K
-      $tauList = if ($IS_DENSE) { "500,1000,2000,4000,8000,16000,32000,64000,128000" } else { "1000,2000,4000,8000,16000,32000,64000" }
-      foreach ($r in @(1,2,3)) {
+      # Original STCF: fixed 3x3 neighborhood, each K is one curve (sweep tau).
+      # Keep tau sweep aligned with BAF to avoid unfair under-sweep.
+      $tauList = if ($PaperAligned) {
+        "2000,5000,10000,15000,20000,25000,30000,40000,50000,64000,80000,100000,128000,160000,200000"
+      } elseif ($IS_DENSE) {
+        "1000,2000,4000,8000,12000,16000,24000,32000"
+      } else {
+        "1000,2000,4000,8000,16000,32000"
+      }
+      $kList = if ($IS_DENSE) { "1,2,3,4,5,6,7,8" } else { "1,2,3,4,5,6" }
+      foreach ($k in ($kList -split ",")) {
         & $PY -m myevs.cli roc `
           --clean $clean --noisy $noisy `
           --assume npy --width $WIDTH --height $HEIGHT `
           --tick-ns $TICK_NS `
           --engine $algEngine `
-          --method stc --radius-px $r `
+          --method stcf_original --radius-px 1 --min-neighbors $k `
           --param time-us --values $tauList `
           --match-us $MATCH_US --match-bin-radius $MATCH_BIN_RADIUS `
-          --tag ("stcf_r{0}" -f $r) --out-csv $outCsv --append --progress
-        if ($LASTEXITCODE -ne 0) { throw "myevs roc failed for stcf r=$r" }
+          --tag ("stcf_orig_k{0}" -f $k) --out-csv $outCsv --append --progress
+        if ($LASTEXITCODE -ne 0) { throw "myevs roc failed for stcf_original k=$k" }
       }
     }
     "ebf" {
@@ -392,28 +420,39 @@ foreach ($lv in $LEVELS) {
       }
     }
     "knoise" {
-      $thr = "0,1,2,3,4,5,6"
-      foreach ($tau in @(1000,2000,4000,8000,16000,32000)) {
-        Run-Roc -Clean $clean -Noisy $noisy -OutCsv $outCsv -Tag ("knoise_tau{0}" -f $tau) -Method "knoise" -Radius 1 -TimeUs $tau -Values $thr -Engine $algEngine
+      if ($PaperAligned) {
+        $tauVals = @(2000,5000,10000,15000,20000,25000,30000,40000,50000,64000,80000,100000,128000,160000,200000)
+        foreach ($tau in $tauVals) {
+          Run-Roc -Clean $clean -Noisy $noisy -OutCsv $outCsv -Tag ("knoise_tau{0}" -f $tau) -Method "knoise" -Radius 1 -TimeUs $tau -Values "1" -Engine $algEngine
+        }
+      } else {
+        $thr = "0,1,2,3,4,5,6"
+        foreach ($tau in @(1000,2000,4000,8000,16000,32000)) {
+          Run-Roc -Clean $clean -Noisy $noisy -OutCsv $outCsv -Tag ("knoise_tau{0}" -f $tau) -Method "knoise" -Radius 1 -TimeUs $tau -Values $thr -Engine $algEngine
+        }
       }
     }
     "evflow" {
-      Write-Host "SKIP: evflow (per user request)"
+      # Keep EVFLOW compact on driving due runtime cost.
+      $thr = if ($IS_DENSE) { New-IntRangeCsv -Start 0 -End 64 -Step 4 } else { "8,16,24,32,48,64" }
+      foreach ($r in @(2)) {
+        foreach ($tau in @(8000, 16000)) {
+          Run-Roc -Clean $clean -Noisy $noisy -OutCsv $outCsv -Tag ("evflow_r{0}_tau{1}" -f $r, $tau) -Method "evflow" -Radius $r -TimeUs $tau -Values $thr -Engine $algEngine
+        }
+      }
     }
     "ynoise" {
-      # Narrowed: best r=2, tau=8K-32K
       $thr = if ($IS_DENSE) { New-IntRangeCsv -Start 0 -End 12 -Step 1 } else { "1,2,3,4,6,8" }
-      foreach ($r in @(2, 3)) {
-        foreach ($tau in @(8000, 16000, 32000, 64000)) {
+      foreach ($r in @(1, 2, 3)) {
+        foreach ($tau in @(8000, 16000, 32000, 64000, 128000, 200000)) {
           Run-Roc -Clean $clean -Noisy $noisy -OutCsv $outCsv -Tag ("ynoise_r{0}_tau{1}" -f $r, $tau) -Method "ynoise" -Radius $r -TimeUs $tau -Values $thr -Engine $algEngine
         }
       }
     }
     "ts" {
-      # Narrowed: best r=2, decay=32K-64K
       $thr = if ($IS_DENSE) { New-FloatRangeCsv -Start 0.01 -End 0.80 -Step 0.01 -Fmt "0.00" } else { "0.05,0.1,0.15,0.2,0.25,0.3,0.4,0.5" }
-      foreach ($r in @(2, 3)) {
-        foreach ($tau in @(16000, 32000, 64000, 128000)) {
+      foreach ($r in @(1, 2, 3)) {
+        foreach ($tau in @(8000, 16000, 32000, 64000, 128000, 200000)) {
           Run-Roc -Clean $clean -Noisy $noisy -OutCsv $outCsv -Tag ("ts_r{0}_decay{1}" -f $r, $tau) -Method "ts" -Radius $r -TimeUs $tau -Values $thr -Engine $algEngine
         }
       }
@@ -459,9 +498,9 @@ foreach ($lv in $LEVELS) {
       }
     }
     "pfd" {
-      # Narrowed: best r=3, tau=8K-32K, m=1-2
+      # Source-aligned PFD uses 3x3 neighborhood (radius=1).
       $thr = if ($IS_DENSE) { New-IntRangeCsv -Start 0 -End 10 -Step 1 } else { "1,2,3,4,5,6,7,8" }
-      $r = 3
+      $r = 1
       $tauList = if ($IS_DENSE) { @(8000,12000,16000,24000,32000) } else { @(8000,16000,32000) }
       $mList = if ($IS_DENSE) { @(1,2,3) } else { @(1,2) }
       foreach ($m in $mList) {
@@ -482,9 +521,14 @@ foreach ($lv in $LEVELS) {
   }
 
   $plotCsv = $outCsv
-  if ($alg -in @("baf", "stcf", "ebf", "n149", "evflow", "ynoise", "ts", "pfd")) {
+  if ($alg -in @("baf", "ebf", "n149", "evflow", "ynoise", "ts", "pfd")) {
     $topTags = Get-TopTagsByRadius -CsvPath $outCsv -TopNPerRadius 3
     $plotCsv = Join-Path $outDir ("roc_{0}_{1}_top3_per_r.csv" -f $alg, $lv.Name)
+    Export-FilteredCsv -InCsv $outCsv -Tags $topTags -OutCsv $plotCsv
+  } elseif ($alg -eq "stcf") {
+    # STCF_orig: each K is one curve, keep best 3 K-curves by AUC.
+    $topTags = Get-TopTagsGlobal -CsvPath $outCsv -TopN 3
+    $plotCsv = Join-Path $outDir ("roc_{0}_{1}_top3_k.csv" -f $alg, $lv.Name)
     Export-FilteredCsv -InCsv $outCsv -Tags $topTags -OutCsv $plotCsv
   } elseif ($alg -eq "mlpf") {
     $topTags = Get-TopTagsGlobal -CsvPath $outCsv -TopN 4
@@ -492,12 +536,18 @@ foreach ($lv in $LEVELS) {
     Export-FilteredCsv -InCsv $outCsv -Tags $topTags -OutCsv $plotCsv
   }
 
+  $plotTitle = if ($alg -eq "stcf") {
+    ("STCF_ORIG ROC (driving-{0})" -f $lv.Name)
+  } else {
+    ("{0} ROC (driving-{1})" -f $alg.ToUpper(), $lv.Name)
+  }
+
   & $PY -m myevs.cli plot-csv `
     --in $plotCsv `
     --out (Join-Path $outDir ("roc_{0}_{1}.png" -f $alg, $lv.Name)) `
     --x fpr --y tpr --group tag --kind line `
     --xlabel FPR --ylabel TPR `
-    --title ("{0} ROC (driving-{1})" -f $alg.ToUpper(), $lv.Name)
+    --title $plotTitle
   if ($LASTEXITCODE -ne 0) {
     throw "plot-csv failed (exit=$LASTEXITCODE): $plotCsv"
   }

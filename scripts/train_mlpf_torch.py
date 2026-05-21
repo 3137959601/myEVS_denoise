@@ -168,7 +168,7 @@ def main() -> int:
     ap.add_argument("--height", type=int, default=260)
     ap.add_argument("--tick-ns", type=float, default=1000.0)
     ap.add_argument("--duration-us", type=int, default=100000)
-    ap.add_argument("--patch", type=int, default=5, choices=[3, 5, 7, 9, 11])
+    ap.add_argument("--patch", type=int, default=7, choices=[3, 5, 7, 9, 11])
     ap.add_argument("--max-events", type=int, default=120000)
     ap.add_argument(
         "--sample-mode",

@@ -82,6 +82,8 @@ def _run_cli_roc(
     out_csv: Path,
     mlpf_model: str = "",
     mlpf_patch: int = 7,
+    pfd_refractory_us: int = 2,
+    pfd_mode: str = "a",
 ) -> pd.DataFrame:
     cmd = [
         py,
@@ -126,7 +128,7 @@ def _run_cli_roc(
             raise FileNotFoundError(f"MLPF model not found: {mlpf_model}")
         cmd.extend(["--mlpf-model", str(mlpf_model), "--mlpf-patch", str(int(mlpf_patch))])
     if str(method).lower() == "pfd":
-        cmd.extend(["--refractory-us", "2", "--pfd-mode", "a"])
+        cmd.extend(["--refractory-us", str(int(pfd_refractory_us)), "--pfd-mode", str(pfd_mode)])
     subprocess.run(cmd, check=True)
     return pd.read_csv(out_csv)
 
@@ -134,15 +136,16 @@ def _run_cli_roc(
 def _algo_space(*, evflow_lite: bool = False) -> list[AlgoCfg]:
     # reduced grid for quick threshold diagnosis
     return [
-        AlgoCfg("baf", "baf", "cpp", [1, 2], [2000, 8000], [1.0]),
-        AlgoCfg("stcf", "stc", "cpp", [1, 2], [4000, 8000], [1, 2, 3, 4]),
+        AlgoCfg("baf", "baf", "cpp", [1], [2000, 8000], [1.0]),
+        # Align STCF_orig tau grid with BAF grid for fair comparison.
+        AlgoCfg("stcf_orig", "stcf_original", "cpp", [1], [2000, 8000], [1, 2, 3, 4, 5, 6]),
         AlgoCfg("ebf", "ebf", "cpp", [2, 3], [16000, 32000], [x * 0.5 for x in range(0, 11)]),
         AlgoCfg("knoise", "knoise", "cpp", [1], [2000, 8000], [0, 1, 2, 3, 4]),
         AlgoCfg("evflow", "evflow", "cpp", [2], [8000, 16000], [8, 16, 24, 32, 48, 64]),
         AlgoCfg("ynoise", "ynoise", "cpp", [2, 3], [8000, 16000], [1, 2, 3, 4, 6, 8]),
         AlgoCfg("ts", "ts", "cpp", [2], [8000, 16000], [0.1, 0.2, 0.4, 0.6, 0.8]),
         AlgoCfg("mlpf", "mlpf", "python", [3], [8000, 16000], [0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]),
-        AlgoCfg("pfd", "pfd", "cpp", [2, 3], [8000, 16000], [1, 2, 3, 4, 6]),
+        AlgoCfg("pfd", "pfd", "cpp", [1], [8000, 16000], [1, 2, 3, 4, 6]),
     ]
 
 
@@ -234,37 +237,46 @@ def main() -> int:
     print(f"[scene-sweep] scene={args.scene} max_events={int(args.max_events)} algorithms={len(algs)+1}", flush=True)
     for ai, alg in enumerate(algs, start=1):
         all_rows = []
-        total_jobs = len(alg.radii) * len(alg.taus_us)
+        pfd_m_list = [1, 2, 3] if alg.name == "pfd" else [None]
+        total_jobs = len(alg.radii) * len(alg.taus_us) * len(pfd_m_list)
         done = 0
         print(f"[scene-sweep] algorithm {ai}/{len(algs)+1}: {alg.name} jobs={total_jobs}", flush=True)
         for r in alg.radii:
             for tau in alg.taus_us:
-                done += 1
-                print(f"[scene-sweep][{alg.name}] {done}/{total_jobs} r={r} tau={tau}", flush=True)
-                out_csv = out_root / alg.name / f"roc_{alg.name}_r{r}_tau{tau}.csv"
-                out_csv.parent.mkdir(parents=True, exist_ok=True)
-                tag = f"{alg.name}_r{r}_tau{tau}_{args.scene}"
-                if out_csv.exists():
-                    df = pd.read_csv(out_csv)
-                else:
-                    df = _run_cli_roc(
-                        args.python,
-                        clean=clean,
-                        noisy=noisy,
-                        width=int(args.width),
-                        height=int(args.height),
-                        tick_ns=float(args.tick_ns),
-                        method=alg.method,
-                        engine=alg.engine,
-                        radius=int(r),
-                        tau_us=int(tau),
-                        thresholds=[float(v) for v in alg.thresholds],
-                        tag=tag,
-                        out_csv=out_csv,
-                        mlpf_model=str(args.mlpf_model_pattern).format(scene=args.scene, level="slices_00031_00040_100ms"),
-                        mlpf_patch=int(args.mlpf_patch),
-                    )
-                all_rows.append(df)
+                for m in pfd_m_list:
+                    done += 1
+                    if m is None:
+                        print(f"[scene-sweep][{alg.name}] {done}/{total_jobs} r={r} tau={tau}", flush=True)
+                        out_csv = out_root / alg.name / f"roc_{alg.name}_r{r}_tau{tau}.csv"
+                        tag = f"{alg.name}_r{r}_tau{tau}_{args.scene}"
+                    else:
+                        print(f"[scene-sweep][{alg.name}] {done}/{total_jobs} r={r} tau={tau} m={m}", flush=True)
+                        out_csv = out_root / alg.name / f"roc_{alg.name}_r{r}_tau{tau}_m{m}.csv"
+                        tag = f"{alg.name}_r{r}_tau{tau}_m{m}_{args.scene}"
+                    out_csv.parent.mkdir(parents=True, exist_ok=True)
+                    if out_csv.exists():
+                        df = pd.read_csv(out_csv)
+                    else:
+                        df = _run_cli_roc(
+                            args.python,
+                            clean=clean,
+                            noisy=noisy,
+                            width=int(args.width),
+                            height=int(args.height),
+                            tick_ns=float(args.tick_ns),
+                            method=alg.method,
+                            engine=alg.engine,
+                            radius=int(r),
+                            tau_us=int(tau),
+                            thresholds=[float(v) for v in alg.thresholds],
+                            tag=tag,
+                            out_csv=out_csv,
+                            mlpf_model=str(args.mlpf_model_pattern).format(scene=args.scene, level="slices_00031_00040_100ms"),
+                            mlpf_patch=int(args.mlpf_patch),
+                            pfd_refractory_us=int(m) if m is not None else 2,
+                            pfd_mode="a",
+                        )
+                    all_rows.append(df)
         full = pd.concat(all_rows, ignore_index=True)
         row_auc, row_da = _select_rows(full)
         summary_rows.append(

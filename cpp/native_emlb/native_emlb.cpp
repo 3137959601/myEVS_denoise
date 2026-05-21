@@ -67,6 +67,29 @@ PYBIND11_MODULE(_native_emlb, m) {
              py::arg("t"), py::arg("x"), py::arg("y"), py::arg("p"))
         .def("reset", &myevs_native_emlb::EventFlowNative::reset);
 
+    py::class_<myevs_native_emlb::MlpfNative>(m, "MlpfNative")
+        .def(py::init<int, int, uint64_t, double, int,
+                      py::array_t<float, py::array::c_style | py::array::forcecast>,
+                      py::array_t<float, py::array::c_style | py::array::forcecast>,
+                      py::array_t<float, py::array::c_style | py::array::forcecast>,
+                      py::array_t<float, py::array::c_style | py::array::forcecast>,
+                      bool, bool, bool>(),
+             py::arg("width"), py::arg("height"), py::arg("duration_ticks"), py::arg("threshold"), py::arg("patch"),
+             py::arg("fc1_weight"), py::arg("fc1_bias"), py::arg("fc2_weight"), py::arg("fc2_bias"),
+             py::arg("output_is_prob") = false, py::arg("show_on") = true, py::arg("show_off") = true)
+        .def("accept_batch", &myevs_native_emlb::MlpfNative::accept_batch,
+             py::arg("t"), py::arg("x"), py::arg("y"), py::arg("p"))
+        .def("reset", &myevs_native_emlb::MlpfNative::reset);
+
+    py::class_<myevs_native_emlb::PfdNative>(m, "PfdNative")
+        .def(py::init<int, int, uint64_t, int, double, int, bool, bool, bool>(),
+             py::arg("width"), py::arg("height"), py::arg("duration_ticks"), py::arg("radius"),
+             py::arg("min_neighbors"), py::arg("stage1_var"), py::arg("mode_b") = false,
+             py::arg("show_on") = true, py::arg("show_off") = true)
+        .def("accept_batch", &myevs_native_emlb::PfdNative::accept_batch,
+             py::arg("t"), py::arg("x"), py::arg("y"), py::arg("p"))
+        .def("reset", &myevs_native_emlb::PfdNative::reset);
+
     py::class_<myevs_native_emlb::N149Native>(m, "N149Native")
         .def(py::init<int, int, uint64_t, int, double, bool, bool>(),
              py::arg("width"), py::arg("height"), py::arg("tau_ticks"), py::arg("radius"), py::arg("threshold"),

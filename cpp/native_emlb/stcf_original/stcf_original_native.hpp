@@ -27,7 +27,9 @@ private:
         int cnt=0; int x0=std::max(0,x-1),x1=std::min(width_-1,x+1),y0=std::max(0,y-1),y1=std::min(height_-1,y+1);
         for(int yy=y0;yy<=y1;++yy)for(int xx=x0;xx<=x1;++xx){
             if(xx==x&&yy==y)continue;
-            int64_t dt=static_cast<int64_t>(t)-static_cast<int64_t>(last_ts_[idx(xx,yy)]);
+            const uint64_t tsn = last_ts_[idx(xx,yy)];
+            if (tsn == 0) continue; // align with BAF: uninitialized neighbors are not valid support
+            int64_t dt=static_cast<int64_t>(t)-static_cast<int64_t>(tsn);
             if(0<=dt&&dt<=static_cast<int64_t>(tau_))++cnt;
         }
         last_ts_[idx(x,y)]=t; return cnt>=k_;
