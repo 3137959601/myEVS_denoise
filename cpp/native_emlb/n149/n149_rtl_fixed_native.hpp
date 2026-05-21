@@ -68,9 +68,11 @@ public:
 
 private:
     static constexpr uint64_t ACC_MASK = (uint64_t{1} << 56) - 1;
+    static constexpr uint32_t HOT_UNIT = 32;
+    static constexpr uint32_t HOT_DECAY_SHIFT = 9;
     static constexpr std::array<uint16_t, 17> F_LUT = {
-        65535, 58857, 54440, 51302, 48958, 47140, 45689, 44504, 43519,
-        42686, 41972, 41355, 40815, 40339, 39916, 39538, 39198
+        65535, 49152, 43691, 40960, 39322, 38229, 37449, 36864, 36409,
+        36045, 35747, 35499, 35289, 35109, 34953, 34816, 34696
     };
 
     uint64_t tau_;
@@ -78,7 +80,7 @@ private:
     uint64_t thr_ticks_;
     std::vector<uint32_t> last_ts_;
     std::vector<uint8_t> last_pol_;
-    std::vector<uint16_t> hot_state_;
+    std::vector<uint8_t> hot_state_;
 
     size_t idx(int32_t x, int32_t y) const noexcept {
         return static_cast<size_t>(y) * static_cast<size_t>(width_) + static_cast<size_t>(x);
@@ -86,22 +88,22 @@ private:
 
     static uint16_t w_same(int d2) noexcept {
         switch (d2) {
-        case 1: return 60497;
-        case 2: return 55846;
-        case 4: return 47589;
-        case 5: return 43930;
-        case 8: return 34557;
+        case 1: return 55664;
+        case 2: return 47279;
+        case 4: return 34108;
+        case 5: return 28970;
+        case 8: return 17752;
         default: return 0;
         }
     }
 
     static uint16_t w_opp(int d2) noexcept {
         switch (d2) {
-        case 1: return 15124;
-        case 2: return 13962;
-        case 4: return 11897;
-        case 5: return 10982;
-        case 8: return 8639;
+        case 1: return 2783;
+        case 2: return 2364;
+        case 4: return 1705;
+        case 5: return 1448;
+        case 8: return 888;
         default: return 0;
         }
     }
@@ -114,12 +116,12 @@ private:
         return -((mag + ((int32_t{1} << bits) - 1)) >> bits);
     }
 
-    static uint16_t interp_f(uint16_t h) noexcept {
-        const uint32_t i = static_cast<uint32_t>(h) >> 12;
-        const uint32_t frac = static_cast<uint32_t>(h) & 0x0fffU;
+    static uint16_t interp_f(uint8_t h) noexcept {
+        const uint32_t i = static_cast<uint32_t>(h) >> 4;
+        const uint32_t frac = static_cast<uint32_t>(h) & 0x0fU;
         const int32_t base = static_cast<int32_t>(F_LUT[i]);
         const int32_t diff = static_cast<int32_t>(F_LUT[i + 1]) - base;
-        int32_t v = base + arithmetic_shift_right(diff * static_cast<int32_t>(frac), 12);
+        int32_t v = base + arithmetic_shift_right(diff * static_cast<int32_t>(frac), 4);
         if (v < 0) return 0;
         if (v > 65535) return 65535;
         return static_cast<uint16_t>(v);
@@ -139,12 +141,12 @@ private:
         const uint8_t pi = p > 0 ? uint8_t{1} : uint8_t{0};
 
         const uint32_t ts0 = last_ts_[idx0];
-        const uint32_t dt0 = (ts0 != 0 && ti >= ts0) ? (ti - ts0) : 0;
-        uint64_t h_next = static_cast<uint64_t>(hot_state_[idx0]) + tau_;
-        const uint64_t h_dec = static_cast<uint64_t>(dt0) << 1;
-        h_next = h_next > h_dec ? (h_next - h_dec) : 0;
-        if (h_next > 65535) h_next = 65535;
-        const uint16_t h_new = static_cast<uint16_t>(h_next);
+        const uint32_t dt0 = (ts0 != 0 && ti >= ts0) ? (ti - ts0) : static_cast<uint32_t>(tau_);
+        const uint32_t h_sum = static_cast<uint32_t>(hot_state_[idx0]) + HOT_UNIT;
+        const uint32_t h_dec = (dt0 + ((uint32_t{1} << HOT_DECAY_SHIFT) - 1)) >> HOT_DECAY_SHIFT;
+        uint32_t h_next = h_sum > h_dec ? (h_sum - h_dec) : 0;
+        if (h_next > 255) h_next = 255;
+        const uint8_t h_new = static_cast<uint8_t>(h_next);
         hot_state_[idx0] = h_new;
 
         uint64_t score_acc = 0;

@@ -15,8 +15,9 @@ public:
           sigma_(std::max(0.1, read_sigma())),
           hot_bits_(read_hot_bits()),
           hot_mask_(hot_bits_ >= 31 ? 0x7FFFFFFF : ((1 << hot_bits_) - 1)),
-          hot_scale_(compute_hot_scale(tau_, hot_mask_)),
-          hot_tau_(to_hot_ticks(tau_, hot_scale_, hot_mask_)),
+          hot_int_bits_(read_hot_int_bits()),
+          hot_unit_(compute_hot_unit(hot_bits_, hot_int_bits_)),
+          hot_decay_k_(read_hot_decay_k()),
           no_hot_(env_flag("MYEVS_N149_NO_HOT")),
           no_beta_(!env_flag("MYEVS_N149_USE_BETA")),
           no_mix_(env_flag("MYEVS_N149_NO_MIX")),
@@ -29,7 +30,7 @@ public:
           hot_k_(read_hot_k()),
           hot_binary_(env_flag("MYEVS_N149_HOT_BINARY")),
           hot_lut_enabled_(false),
-          hot_lut_bits_(read_hot_lut_bits()),
+          hot_lut_bits_(std::min(read_hot_lut_bits(), hot_bits_)),
           wt_linear_(env_flag("MYEVS_N149_WT_LINEAR")),
           simple_a_(env_flag("MYEVS_N149_SIMPLE_A")),
           simple_b_(env_flag("MYEVS_N149_SIMPLE_B")),
@@ -87,7 +88,7 @@ public:
 
 private:
     uint64_t tau_; int radius_; double threshold_; double sigma_;
-    int hot_bits_; int32_t hot_mask_; uint64_t hot_scale_; int32_t hot_tau_;
+    int hot_bits_; int32_t hot_mask_; int hot_int_bits_; int32_t hot_unit_; double hot_decay_k_;
     bool no_hot_, no_beta_, no_mix_, no_opp_, no_sfrac_, no_spatial_;
     int alpha_form_; double u_denom_factor_; int b_denom_form_; double hot_k_;
     bool hot_binary_, hot_lut_enabled_, wt_linear_, simple_a_, simple_b_, alpha_instant_, use_ema_;
@@ -109,28 +110,27 @@ private:
         try { double d = std::stod(v); return std::isfinite(d) && d >= 0.1 ? d : 3.0; } catch (...) { return 3.0; }
     }
     static int read_hot_bits() {
-        const char *v = std::getenv("MYEVS_N149_HOT_BITS"); if (!v) return 31;
+        const char *v = std::getenv("MYEVS_N149_HOT_BITS"); if (!v) return 8;
         try { int b = std::stoi(v); return std::clamp(b, 2, 31); } catch (...) { return 31; }
     }
-    static uint64_t ceil_div_u64(uint64_t a, uint64_t b) {
-        return b == 0 ? a : (a / b) + ((a % b) ? 1 : 0);
+    static int read_hot_int_bits() {
+        const char *v = std::getenv("MYEVS_N149_HOT_INT_BITS"); if (!v) return 3;
+        try { int b = std::stoi(v); return std::clamp(b, 1, 16); } catch (...) { return 3; }
     }
-    static uint64_t next_pow2_u64(uint64_t v) {
-        if (v <= 1) return 1;
-        --v;
-        for (unsigned s = 1; s < 64; s <<= 1) v |= v >> s;
-        return v + 1;
+    static double read_hot_decay_k() {
+        const char *v = std::getenv("MYEVS_N149_HOT_DECAY_K"); if (!v) return 2.0;
+        try { double d = std::stod(v); return std::isfinite(d) && d >= 0.0 ? d : 2.0; } catch (...) { return 2.0; }
     }
-    static uint64_t compute_hot_scale(uint64_t tau, int32_t hot_mask) {
-        const uint64_t hmax = static_cast<uint64_t>(std::max<int32_t>(1, hot_mask));
-        const uint64_t target = std::max<uint64_t>(1, hmax / 2);
-        if (tau <= target) return 1;
-        return next_pow2_u64(ceil_div_u64(tau, target));
+    static int32_t compute_hot_unit(int hot_bits, int hot_int_bits) {
+        int frac_bits = std::max(0, hot_bits - std::max(1, hot_int_bits));
+        if (frac_bits >= 30) return 1 << 30;
+        return std::max<int32_t>(1, 1 << frac_bits);
     }
-    static int32_t to_hot_ticks(uint64_t tau, uint64_t scale, int32_t hot_mask) {
-        uint64_t q = ceil_div_u64(std::max<uint64_t>(1, tau), std::max<uint64_t>(1, scale));
-        q = std::min<uint64_t>(q, static_cast<uint64_t>(std::max<int32_t>(1, hot_mask)));
-        return static_cast<int32_t>(q);
+    static int64_t hot_decay(uint64_t dt, uint64_t tau, int32_t hot_unit, double decay_k) {
+        long double v = (static_cast<long double>(decay_k) * static_cast<long double>(dt) * static_cast<long double>(hot_unit)) /
+                        static_cast<long double>(std::max<uint64_t>(1, tau));
+        if (v >= static_cast<long double>(std::numeric_limits<int64_t>::max())) return std::numeric_limits<int64_t>::max();
+        return static_cast<int64_t>(std::ceil(v));
     }
     static int read_alpha_form() {
         const char *v = std::getenv("MYEVS_N149_ALPHA_FORM"); if (!v) return 0;
@@ -157,12 +157,14 @@ private:
         try { int b = std::stoi(v); return std::clamp(b, 2, 8); } catch (...) { return 4; }
     }
     void build_hot_lut() {
-        int lut_entries = 1 << hot_lut_bits_, h_max = 1 << hot_bits_, step = h_max >> hot_lut_bits_;
-        double tr = static_cast<double>(hot_tau_);
+        int lut_entries = 1 << hot_lut_bits_;
+        uint64_t h_max = uint64_t{1} << hot_bits_;
+        uint64_t step = std::max<uint64_t>(1, h_max >> hot_lut_bits_);
+        double tr = static_cast<double>(hot_unit_);
         hot_lut_tbl_.resize(lut_entries + 1);
         for (int i = 0; i <= lut_entries; ++i)
             hot_lut_tbl_[i] = (static_cast<double>(i*step) + tr) / (hot_k_ * static_cast<double>(i*step) + tr);
-        hot_lut_step_ = step;
+        hot_lut_step_ = static_cast<int>(std::min<uint64_t>(step, static_cast<uint64_t>(std::numeric_limits<int>::max())));
     }
 
     bool acc_neighbor(size_t k, uint64_t ti, int8_t pi, double w_space, double &raw_same, double &raw_opp, int &cnt_support) const {
@@ -190,8 +192,7 @@ private:
         int32_t h0 = hot_state_[idx0];
         uint64_t ts0 = last_ts_[idx0];
         uint64_t dt0_u = tau_; if (ts0 != 0) dt0_u = abs_dt(t, ts0);
-        int64_t dt0 = static_cast<int64_t>(ceil_div_u64(dt0_u, hot_scale_));
-        int64_t h_new = static_cast<int64_t>(h0) + static_cast<int64_t>(hot_tau_) - 2 * dt0;
+        int64_t h_new = static_cast<int64_t>(h0) + static_cast<int64_t>(hot_unit_) - hot_decay(dt0_u, tau_, hot_unit_, hot_decay_k_);
         h0 = static_cast<int32_t>(std::clamp<int64_t>(h_new, 0, std::numeric_limits<int32_t>::max()));
         h0 = (h0 > hot_mask_) ? hot_mask_ : h0;
 
@@ -212,7 +213,7 @@ private:
         if (!simple_b_) last_pol_[idx0] = p;
         hot_state_[idx0] = h0;
 
-        double tr = static_cast<double>(hot_tau_);
+        double tr = static_cast<double>(hot_unit_);
         double discount_num = static_cast<double>(h0) + tr, discount_factor;
         if (hot_lut_enabled_) {
             int hc = h0 & hot_mask_, i = hc >> (hot_bits_ - hot_lut_bits_);

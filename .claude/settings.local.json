@@ -3,7 +3,16 @@
     "allow": [
       "Bash(Get-ChildItem -Path \"D:\\\\hjx_workspace\\\\scientific_reserach\\\\projects\\\\myEVS\\\\scripts\\\\driving_ED24_alg_evalu\" -Recurse)",
       "Bash(Select-Object FullName, Length)",
-      "PowerShell(New-Item -ItemType Directory -Force -Path \"data/DND21/mydriving_ED24/MLPF\")"
+      "PowerShell(New-Item -ItemType Directory -Force -Path \"data/DND21/mydriving_ED24/MLPF\")",
+      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe D:/hjx_workspace/scientific_reserach/projects/myEVS/scripts/n149_ablation/run_phase1_drive.py)",
+      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe D:/hjx_workspace/scientific_reserach/projects/myEVS/scripts/n149_ablation/run_phase1_ped.py)",
+      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe D:/hjx_workspace/scientific_reserach/projects/myEVS/scripts/n149_ablation/run_phase1_bike.py)",
+      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe D:/hjx_workspace/scientific_reserach/projects/myEVS/scripts/n149_ablation/run_phase1_dvsclean.py)",
+      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe D:/hjx_workspace/scientific_reserach/projects/myEVS/scripts/n149_ablation/run_phase1_led.py)",
+      "Bash(tail -3 \"C:/Users/31379/AppData/Local/Temp/claude/d--hjx-workspace-scientific-reserach-projects/myEVS/2e47c91c-75d1-4788-8680-8ad7c84f540b/tasks/b1v86tnan.output\" 2>/dev/null)",
+      "Read(//c/Users/31379/AppData/Local/Temp/claude/d--hjx-workspace-scientific-reserach-projects/myEVS/2e47c91c-75d1-4788-8680-8ad7c84f540b/tasks/**)",
+      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe -c ' *)",
+      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe D:/hjx_workspace/scientific_reserach/projects/myEVS/scripts/n149_ablation/plot_drive_sweep.py)"
     ]
   }
 }
