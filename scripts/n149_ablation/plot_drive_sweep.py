@@ -57,7 +57,7 @@ for ax, param, title, xlab in zip(axes.flat, params, titles, xlabels):
 
     ax.set_title(title, fontweight="bold")
     ax.set_xlabel(xlab)
-    ax.set_ylabel("AUC")
+    ax.set_ylabel("AUC value")
     # Format x-axis: show actual swept values
     swept_vals = sorted(sub["val_num"].unique())
     if param == "tau":
