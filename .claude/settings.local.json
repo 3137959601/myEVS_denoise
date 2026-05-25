@@ -13,7 +13,16 @@
       "Read(//c/Users/31379/AppData/Local/Temp/claude/d--hjx-workspace-scientific-reserach-projects/myEVS/2e47c91c-75d1-4788-8680-8ad7c84f540b/tasks/**)",
       "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe -c ' *)",
       "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe D:/hjx_workspace/scientific_reserach/projects/myEVS/scripts/n149_ablation/plot_drive_sweep.py)",
-      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe D:/hjx_workspace/scientific_reserach/projects/myEVS/scripts/run_boundary_fix.py)"
+      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe D:/hjx_workspace/scientific_reserach/projects/myEVS/scripts/run_boundary_fix.py)",
+      "Bash(Move-Item scripts/led_baf_stcf_opt.py scripts/LED_alg_evalu/run_led_baf_stcf_opt.py -Force)",
+      "Bash(Remove-Item scripts/diagnose_stcf_orig_led.py -ErrorAction SilentlyContinue)",
+      "Bash(Remove-Item scripts/diagnose_bytecmp.py -ErrorAction SilentlyContinue)",
+      "PowerShell(Move-Item scripts/led_baf_stcf_opt.py scripts/LED_alg_evalu/run_led_baf_stcf_opt.py -Force)",
+      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/LED_alg_evalu/run_led_baf_stcf_opt.py)",
+      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe -c \"import pandas as pd; df=pd.read_csv\\('data/missing_alg/led/miss_led_scene_100_stcf_orig_opt.csv'\\); print\\(df.columns.tolist\\(\\)\\); print\\(\\); print\\(df[['tag','value','auc','f1']].head\\(30\\).to_string\\(\\)\\)\")",
+      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/LED_alg_evalu/run_led_phase2_all.py)",
+      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/n149_ablation/plot_drive_sweep.py)",
+      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/n149_ablation/run_alpha_supplement.py)"
     ]
   }
 }

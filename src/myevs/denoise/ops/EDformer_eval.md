@@ -23,6 +23,7 @@
 | EDformer-LED-scratch-raw | 否 | 随机初始化 | LED 训练集中排除 10 个保留 scene 后的 590 个 scene | 原始 LED 坐标 | 衡量不依赖 ED24 预训练时，EDformer 结构在 LED 上能学到的性能 |
 | EDformer-LED-scratch-norm | 否 | 随机初始化 | LED 训练集中排除 10 个保留 scene 后的 590 个 scene | x/y 按 1280×720 归一化到 [0,1] | 检验 LED 坐标尺度是否限制性能 |
 | EDformer-ED24-retrained | 否 | 随机初始化 | ED24 排除 `Bicycle_02`、`Pedestrain_06` 后的 98 个 scene | 原始 ED24 坐标 | 检验重新划分 ED24 训练集后的泛化能力 |
+| EDformer-ED24-category-held-out | 否 | 随机初始化 | ED24 排除全部 `Bicycle_*` 和全部 `Pedestrain_*` 后的 85 个 scene | 原始 ED24 坐标 | 更严格检验未见行人/自行车类别上的 ED24 泛化能力 |
 
 ### 三个 LED 新模型的训练细节
 
@@ -45,6 +46,130 @@
 - **评估结果目录**: `ed24_retrain/results/generalization/`
 
 论文中建议写为：`EDformer trained on ED24 excluding Bicycle_02 and Pedestrain_06`。该模型仍是 EDformer 结构，但不是原始 released pretrained 权重。
+
+### ED24 重新训练实验结果
+
+训练已完成，最终 epoch 记录如下：
+
+- **训练完成时间**: 2026-05-23 06:54
+- **最终 epoch**: 60/60
+- **最终训练 loss sum**: 96.0220
+- **最终训练平均 loss**: 0.088581
+- **最终训练 accuracy**: 0.8321
+- **best checkpoint**: `ed24_retrain/checkpoints/ed24_retrain_best.pth`
+- **评估结果目录**: `ed24_retrain/results/generalization/`
+
+**平均 AUC 对比**:
+
+| 数据集 | ED24 原预训练 | ED24 重新训练 | 变化 |
+|--------|--------------|---------------|------|
+| Driving Mix | 0.940906 | **0.942192** | +0.001287 |
+| ED24 held-out (`Pedestrain_06`, `Bicycle_02`) | **0.982015** | 0.980463 | -0.001552 |
+| DVSCLEAN | 0.980808 | **0.981130** | +0.000322 |
+| LED | **0.581471** | 0.560133 | -0.021338 |
+
+**ED24 held-out 逐项结果**:
+
+| 数据集 | 电压 | ED24 原预训练 | ED24 重新训练 | 变化 |
+|--------|------|--------------|---------------|------|
+| Pedestrain_06 | 1.8V | 0.977345 | 0.976263 | -0.001082 |
+| Pedestrain_06 | 2.1V | 0.976287 | 0.974239 | -0.002048 |
+| Pedestrain_06 | 2.5V | 0.971501 | 0.969057 | -0.002444 |
+| Pedestrain_06 | 3.3V | 0.961457 | 0.957797 | -0.003660 |
+| Bicycle_02 | 1.8V | 0.995207 | 0.994690 | -0.000517 |
+| Bicycle_02 | 2.1V | 0.995429 | 0.994635 | -0.000794 |
+| Bicycle_02 | 2.5V | 0.993000 | 0.992081 | -0.000919 |
+| Bicycle_02 | 3.3V | 0.985895 | 0.984944 | -0.000951 |
+
+**LED 逐 scene 结果**:
+
+| Scene | ED24 原预训练 | ED24 重新训练 | 变化 |
+|-------|--------------|---------------|------|
+| scene_100 | 0.620102 | **0.674501** | +0.054399 |
+| scene_1004 | **0.579085** | 0.563704 | -0.015380 |
+| scene_1018 | **0.577195** | 0.541738 | -0.035457 |
+| scene_1028 | **0.551072** | 0.536740 | -0.014332 |
+| scene_1032 | **0.617092** | 0.551486 | -0.065605 |
+| scene_1033 | **0.559350** | 0.536092 | -0.023257 |
+| scene_1034 | **0.574792** | 0.538870 | -0.035922 |
+| scene_1043 | **0.610079** | 0.585772 | -0.024307 |
+| scene_1045 | **0.564652** | 0.540263 | -0.024389 |
+| scene_1046 | **0.561292** | 0.532165 | -0.029127 |
+
+**结论**:
+
+1. 排除 `Pedestrain_06` 和 `Bicycle_02` 后重新训练，ED24 held-out 平均 AUC 仍为 **0.980463**，只比原预训练低 0.001552，说明原 ED24 高分不是因为这两个测试 scene 泄漏到训练集造成的。
+2. Driving Mix 和 DVSCLEAN 基本保持原预训练水平，说明 ED24 重新训练得到的权重仍具备较强跨数据集泛化能力。
+3. LED 平均 AUC 反而从 0.581471 降到 0.560133，说明“重新划分 ED24 训练集”不能改善 LED；LED 低分更可能来自 Prophesee/LED 数据域差异、事件密度和时间上下文尺度不匹配。
+4. 这个实验进一步支持：若论文中要报告 EDformer 的原始泛化能力，ED24 预训练或 ED24 重新训练模型都可以作为 ED24 域模型；但它们都不能作为强 LED 专用模型。
+
+### ED24 category-held-out 重新训练实验
+
+为进一步排除“同类行人/自行车场景仍在训练集中”的影响，新增更严格的 category-held-out 实验。该实验排除全部 `Bicycle_*` 和全部 `Pedestrain_*`，而不是只排除 `Bicycle_02` 和 `Pedestrain_06`。
+
+- **实验目录**: `ed24_retrain/category_heldout/`
+- **排除 scene**: `Bicycle_01`, `Bicycle_02`, `Bicycle_03`, `Pedestrain_01` 到 `Pedestrain_12`
+- **排除 scene 数**: 15
+- **训练 scene 数**: 85
+- **训练 CSV 数**: 1785，比 scene-held-out 的 2058 个 CSV 少约 13.3%
+- **训练设置**: scratch 初始化，60 epochs，batch size 96，seq len 4096，learning rate 1e-3，weight decay 1e-2，seed 230086
+- **checkpoint 输出**: `ed24_retrain/category_heldout/checkpoints/`
+- **日志**: `ed24_retrain/category_heldout/logs/train.log`
+- **best checkpoint**: `ed24_retrain/category_heldout/checkpoints/ed24_retrain_best.pth`
+- **评估结果目录**: `ed24_retrain/category_heldout/results/generalization/`
+
+论文中建议写为：`EDformer trained on ED24 excluding all Pedestrain and Bicycle scenes`。这个结果将比 scene-held-out 更适合回答 EDformer 对未见语义/运动类别的泛化能力。
+
+训练与四个数据集评估均已完成：
+
+- **训练完成时间**: 2026-05-24 15:33
+- **最终 epoch**: 60/60
+- **最终训练平均 loss**: 0.089039
+- **最终训练 accuracy**: 0.8317
+
+**平均 AUC 对比**:
+
+| 数据集 | ED24 原预训练 | ED24 scene-held-out | ED24 category-held-out | category 相对原预训练 |
+|--------|--------------|---------------------|------------------------|-----------------------|
+| Driving Mix | 0.940906 | 0.942192 | **0.942751** | +0.001845 |
+| ED24 held-out (`Pedestrain_06`, `Bicycle_02`) | **0.982015** | 0.980463 | 0.979888 | -0.002127 |
+| DVSCLEAN | 0.980808 | 0.981130 | **0.997438** | +0.016630 |
+| LED | 0.581471 | 0.560133 | **0.664693** | +0.083222 |
+
+**ED24 held-out 逐项结果**:
+
+| 数据集 | 电压 | ED24 category-held-out AUC |
+|--------|------|----------------------------|
+| Pedestrain_06 | 1.8V | 0.976014 |
+| Pedestrain_06 | 2.1V | 0.973983 |
+| Pedestrain_06 | 2.5V | 0.968173 |
+| Pedestrain_06 | 3.3V | 0.956055 |
+| Bicycle_02 | 1.8V | 0.994536 |
+| Bicycle_02 | 2.1V | 0.994661 |
+| Bicycle_02 | 2.5V | 0.991618 |
+| Bicycle_02 | 3.3V | 0.984066 |
+
+**LED 逐 scene 对比**:
+
+| Scene | ED24 原预训练 | ED24 scene-held-out | ED24 category-held-out | category 相对原预训练 |
+|-------|--------------|---------------------|------------------------|-----------------------|
+| scene_100 | 0.620102 | 0.674501 | **0.733138** | +0.113036 |
+| scene_1004 | 0.579085 | 0.563704 | **0.649860** | +0.070775 |
+| scene_1018 | 0.577195 | 0.541738 | **0.674653** | +0.097458 |
+| scene_1028 | 0.551072 | 0.536740 | **0.625441** | +0.074368 |
+| scene_1032 | 0.617092 | 0.551486 | **0.680707** | +0.063615 |
+| scene_1033 | 0.559350 | 0.536092 | **0.649408** | +0.090059 |
+| scene_1034 | 0.574792 | 0.538870 | **0.659423** | +0.084631 |
+| scene_1043 | 0.610079 | 0.585772 | **0.692520** | +0.082441 |
+| scene_1045 | 0.564652 | 0.540263 | **0.644233** | +0.079581 |
+| scene_1046 | 0.561292 | 0.532165 | **0.637544** | +0.076252 |
+
+**category-held-out 结论**:
+
+1. 这个划分比只排除 `Pedestrain_06` 和 `Bicycle_02` 更严格，因为训练集中完全没有行人和自行车类别。即使如此，ED24 held-out 平均 AUC 仍为 **0.979888**，说明 EDformer 在 ED24 内部不是简单记住同类 scene。
+2. Driving Mix 仍保持 **0.942751**，DVSCLEAN 达到 **0.997438**，说明该模型仍具备较强的非 LED 数据泛化能力。
+3. LED 从原始 ED24 预训练的 0.581471 提升到 **0.664693**，比 scene-held-out 更好，但仍明显低于 LED 微调/LED 从零训练的约 0.79，也低于传统算法常见的接近 0.9。
+4. 因此，LED 低分不能仅归因于 ED24 训练/测试 scene 泄漏或行人/自行车类别重合。更合理的解释仍是 LED/Prophesee 的噪声域、事件时间尺度、标注生成方式和类别比例与 ED24/DAVIS 存在较大差异。
 
 保留测试 scene 固定为：`scene_100`, `scene_1004`, `scene_1018`, `scene_1028`, `scene_1032`, `scene_1033`, `scene_1034`, `scene_1043`, `scene_1045`, `scene_1046`。这些 scene 没有参与 LED 微调或 LED 从零训练。
 

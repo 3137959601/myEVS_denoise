@@ -1,4 +1,4 @@
-"""Plot Driving hyperparameter sweeps (4-panel: r, tau, sigma, alpha)."""
+"""Plot Driving hyperparameter sweeps (4-panel academic style)."""
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
@@ -14,7 +14,6 @@ df2 = pd.read_csv(os.path.join(base, "phase2_sigma.csv"))
 df2["param"] = "sigma"
 df2["value"] = df2["sigma"].apply(lambda x: str(x).replace(".", "p"))
 df = df[df["param"] != "sigma"]
-# Add missing f1 column (not used in plot, just for concat compatibility)
 df2["f1"] = 0.0
 df = pd.concat([df, df2[["level", "param", "value", "auc", "f1"]]], ignore_index=True)
 
@@ -25,23 +24,22 @@ LEVEL_LABELS = {
 COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"]
 LEVELS = ["1hz", "3hz", "5hz", "7hz", "10hz"]
 
-# Set style
 plt.rcParams.update({
-    "font.family": "Arial", "font.size": 11,
-    "axes.labelsize": 12, "axes.titlesize": 13,
-    "legend.fontsize": 9, "figure.dpi": 150,
+    "font.family": "Arial", "font.size": 18,
+    "axes.labelsize": 20, "axes.titlesize": 13,
+    "legend.fontsize": 14, "figure.dpi": 150,
+    "xtick.labelsize": 16, "ytick.labelsize": 16,
 })
 
-fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+fig, axes = plt.subplots(2, 2, figsize=(18, 12))
 params = ["r", "tau", "sigma", "alpha"]
-titles = [r"(a) Radius $r$", r"(b) Time Window $\tau$ (us)", r"(c) Spatial Scale $\sigma$", r"(d) Polarity Weight $\alpha$"]
-xlabels = ["$r$", r"$\tau$ (us)", r"$\sigma$", r"$\alpha$"]
+panel_labels = ["(a)", "(b)", "(c)", "(d)"]
+xlabels = ["$r$", r"$\tau$ ($\mu$s)", r"$\sigma$", r"$\alpha$"]
 
-for ax, param, title, xlab in zip(axes.flat, params, titles, xlabels):
+for ax, param, plabel, xlab in zip(axes.flat, params, panel_labels, xlabels):
     sub = df[df["param"] == param].copy()
     if sub.empty: continue
 
-    # Parse values
     def parse_val(v):
         if v == "ema": return None
         return float(str(v).replace("p", "."))
@@ -53,12 +51,16 @@ for ax, param, title, xlab in zip(axes.flat, params, titles, xlabels):
         sl = sub[sub["level"] == lv]
         if sl.empty: continue
         ax.plot(sl["val_num"], sl["auc"], "o-", color=COLORS[i],
-                label=LEVEL_LABELS[lv], markersize=4, linewidth=1.2)
+                label=LEVEL_LABELS[lv], markersize=8, linewidth=2.0)
 
-    ax.set_title(title, fontweight="bold")
+    # Panel label outside axes (top-left margin), never overlaps curves
+    ax.text(-0.06, 1.01, plabel, transform=ax.transAxes,
+            fontsize=20, fontweight="bold", va="bottom", ha="left")
+
     ax.set_xlabel(xlab)
     ax.set_ylabel("AUC value")
-    # Format x-axis: show actual swept values
+
+    # Format x-axis
     swept_vals = sorted(sub["val_num"].unique())
     if param == "tau":
         ax.set_xscale("log")
@@ -68,26 +70,26 @@ for ax, param, title, xlab in zip(axes.flat, params, titles, xlabels):
         ax.set_xticks(swept_vals)
         ax.set_xlim(min(swept_vals)-0.3, max(swept_vals)+0.3)
     elif param == "alpha":
-        ax.set_xticks([v for v in swept_vals if v <= 1.0])
+        ax.set_xticks([v for v in swept_vals if v <= 1.0 and (abs(v) < 0.001 or v >= 0.1)])
         ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda v, _: "0" if abs(v)<0.001 else f"{v:.2f}"))
         ax.set_xlim(-0.03, 1.05)
     elif param == "sigma":
         ax.set_xticks(swept_vals)
 
-    # Mark optimal
+    # Mark optimal point per level
     best_row = sub.loc[sub.groupby("level")["auc"].idxmax()]
     for i, lv in enumerate(LEVELS):
         br = best_row[best_row["level"] == lv]
         if not br.empty:
             ax.plot(br["val_num"].iloc[0], br["auc"].iloc[0], "D",
-                    color=COLORS[i], markersize=6, zorder=5)
+                    color=COLORS[i], markersize=10, zorder=5)
 
 # Single legend
 handles, labels = axes[0, 0].get_legend_handles_labels()
 fig.legend(handles, labels, loc="lower center", ncol=5, bbox_to_anchor=(0.5, -0.02),
-           frameon=True, fancybox=True, shadow=True)
+           frameon=True, fancybox=True, shadow=True, markerscale=1.5, fontsize=12)
 
-plt.tight_layout(rect=[0, 0.06, 1, 1.0])
+plt.tight_layout(rect=[0, 0.02, 1, 1.0])
 
 out_path = os.path.join(base, "fig_drive_sweep.png")
 fig.savefig(out_path, dpi=200, bbox_inches="tight")
