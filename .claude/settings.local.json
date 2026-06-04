@@ -22,7 +22,16 @@
       "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe -c \"import pandas as pd; df=pd.read_csv\\('data/missing_alg/led/miss_led_scene_100_stcf_orig_opt.csv'\\); print\\(df.columns.tolist\\(\\)\\); print\\(\\); print\\(df[['tag','value','auc','f1']].head\\(30\\).to_string\\(\\)\\)\")",
       "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/LED_alg_evalu/run_led_phase2_all.py)",
       "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/n149_ablation/plot_drive_sweep.py)",
-      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/n149_ablation/run_alpha_supplement.py)"
+      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/n149_ablation/run_alpha_supplement.py)",
+      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe -m pip install -e . --no-build-isolation)",
+      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/LED_alg_evalu/run_led_polarity_ablation.py)",
+      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/DVSCLEAN_alg_evalu/run_dvsclean_polarity_ablation.py)",
+      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/n149_ablation/run_component_ablation.py)",
+      "PowerShell($env:MYEVS_N149_HOT_BITS=\"16\"; $env:MYEVS_N149_SIGMA=\"1.75\"; $env:MYEVS_N149_ALPHA_FIXED=\"0.05\"; $env:MYEVS_N149_BLIND=\"1\"; D:/software/Anaconda_envs/envs/myEVS/python.exe -m myevs.cli roc --clean \"D:/hjx_workspace/scientific_reserach/dataset/DND21/mydriving_ED24/driving_noise_1hz_ed24_withlabel/driving_noise_1hz_signal_only.npy\" --noisy \"D:/hjx_workspace/scientific_reserach/dataset/DND21/mydriving_ED24/driving_noise_1hz_ed24_withlabel/driving_noise_1hz_labeled.npy\" --assume npy --width 346 --height 260 --tick-ns 1000 --engine cpp --method n149 --radius-px 2 --time-us 32000 --param min-neighbors --values \"0,0.2,0.4,0.6,0.8,1,1.2,1.4,1.6,1.8,2,2.5,3,4,5,6,8\" --match-us 0 --match-bin-radius 0 --tag test_pol --out-csv \"D:/hjx_workspace/scientific_reserach/projects/myEVS/data/_test_pol.csv\" --append)",
+      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/n149_ablation/run_comp_ab_polarity_v3.py)",
+      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/n149_ablation/run_comp_ab_time_only.py)",
+      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/n149_ablation/run_time_only_sweep.py)",
+      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/n149_ablation/run_no_spatial_sweep.py)"
     ]
   }
 }

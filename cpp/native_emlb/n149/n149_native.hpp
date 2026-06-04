@@ -22,6 +22,7 @@ public:
           no_beta_(!env_flag("MYEVS_N149_USE_BETA")),
           no_mix_(env_flag("MYEVS_N149_NO_MIX")),
           no_opp_(env_flag("MYEVS_N149_NO_OPP")),
+          no_same_(env_flag("MYEVS_N149_NO_SAME")),
           no_sfrac_(!env_flag("MYEVS_N149_USE_SFRAC")),
           no_spatial_(env_flag("MYEVS_N149_NO_SPATIAL")),
           alpha_form_(read_alpha_form()),
@@ -34,10 +35,12 @@ public:
           wt_linear_(env_flag("MYEVS_N149_WT_LINEAR")),
           simple_a_(env_flag("MYEVS_N149_SIMPLE_A")),
           simple_b_(env_flag("MYEVS_N149_SIMPLE_B")),
+          blind_(env_flag("MYEVS_N149_BLIND")),
           use_ema_(env_flag("MYEVS_N149_USE_EMA")),
           alpha_instant_(!use_ema_),  // v2.2: default instant, EMA is opt-in
           alpha_fixed_(read_alpha_fixed()) {
         if (use_ema_) alpha_instant_ = false;  // EMA overrides instant
+        if (blind_) { no_mix_ = true; no_opp_ = true; }
         if (simple_b_) { simple_a_ = true; no_hot_ = true; no_mix_ = true; no_opp_ = true; }
         if (simple_a_) { no_hot_ = true; no_mix_ = true; no_opp_ = true; }
         hot_lut_enabled_ = env_flag("MYEVS_N149_HOT_LUT");
@@ -66,7 +69,7 @@ public:
         py::array_t<uint8_t> out(n);
         auto ob = out.mutable_unchecked<1>();
         for (py::ssize_t i = 0; i < n; ++i)
-            ob(i) = accept_one(xb(i), yb(i), norm_pol(pb(i)), tb(i)) ? uint8_t{1} : uint8_t{0};
+            ob(i) = accept_one(xb(i), yb(i), blind_ ? int8_t{1} : norm_pol(pb(i)), tb(i)) ? uint8_t{1} : uint8_t{0};
         return out;
     }
 
@@ -82,14 +85,14 @@ public:
         py::array_t<double> out(n);
         auto ob = out.mutable_unchecked<1>();
         for (py::ssize_t i = 0; i < n; ++i)
-            ob(i) = score_one(xb(i), yb(i), norm_pol(pb(i)), tb(i));
+            ob(i) = score_one(xb(i), yb(i), blind_ ? int8_t{1} : norm_pol(pb(i)), tb(i));
         return out;
     }
 
 private:
     uint64_t tau_; int radius_; double threshold_; double sigma_;
     int hot_bits_; int32_t hot_mask_; int hot_int_bits_; int32_t hot_unit_; double hot_decay_k_;
-    bool no_hot_, no_beta_, no_mix_, no_opp_, no_sfrac_, no_spatial_;
+    bool no_hot_, no_beta_, no_mix_, no_opp_, no_same_, no_sfrac_, no_spatial_, blind_;
     int alpha_form_; double u_denom_factor_; int b_denom_form_; double hot_k_;
     bool hot_binary_, hot_lut_enabled_, wt_linear_, simple_a_, simple_b_, alpha_instant_, use_ema_;
     double alpha_fixed_; int hot_lut_bits_;
@@ -168,7 +171,8 @@ private:
     }
 
     bool acc_neighbor(size_t k, uint64_t ti, int8_t pi, double w_space, double &raw_same, double &raw_opp, int &cnt_support) const {
-        if (simple_b_) { /* all polarities */ }
+        if (blind_) { /* all polarities, no polarity check */ }
+        else if (simple_b_) { /* all polarities */ }
         else if (simple_a_) { if (last_pol_[k] != pi) return false; }
         else { int8_t pn = last_pol_[k]; if (pn != pi && pn != -pi) return false; }
         uint64_t ts = last_ts_[k];
@@ -178,7 +182,7 @@ private:
         double base_time = 1.0 - static_cast<double>(dt) / static_cast<double>(tau_);
         if (base_time <= 0.0) return false;
         double wst = (wt_linear_ ? base_time : base_time * base_time) * w_space;
-        if (simple_a_ || simple_b_) raw_same += wst;
+        if (blind_ || simple_a_ || simple_b_) raw_same += wst;
         else if (last_pol_[k] == pi) { raw_same += wst; ++cnt_support; }
         else raw_opp += wst;
         return true;
@@ -208,9 +212,10 @@ private:
                 acc_neighbor(idx(xx, yy), t, p, w_space, raw_same, raw_opp, cnt_support);
             }
         if (no_opp_) raw_opp = 0.0;
+        if (no_same_) raw_same = 0.0;
 
         last_ts_[idx0] = t;
-        if (!simple_b_) last_pol_[idx0] = p;
+        if (!blind_ && !simple_b_) last_pol_[idx0] = p;
         hot_state_[idx0] = h0;
 
         double tr = static_cast<double>(hot_unit_);
