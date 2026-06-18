@@ -1,4 +1,4 @@
-# EDnCNN 预训练模型 AUC 评估
+# EDnCNN 预训练模型 AUC/F1 评估
 
 本工程独立于原始 EdnCNN 代码目录，不覆盖 `/home/stu1/LJC/EVS/DL_ED/edncnn/`。
 
@@ -13,105 +13,123 @@
 
 EdnCNN 原始流程依赖 DVSNOISE20 的 APS frame/IMU 生成 EPM 标签；当前 ED24、Driving、DVSCLEAN、LED 数据没有对应 APS/IMU，因此这里只使用预训练 CNN 的事件 time-surface 特征推理，不重新生成 EPM，也不重新训练。
 
-网络输出类别为 `[false, true]`，其中 `true` 对应原始 EPM 概率大于 0.5 的有效事件。本评估使用 `P(noise)=1-P(valid)` 作为噪声分数，并与各数据集标签 `label=1` 为噪声计算 AUC。
+网络输出类别为 `[false, true]`，其中 `true` 对应原始 EPM 概率大于 0.5 的有效事件。本评估使用 `P(noise)=1-P(valid)` 作为噪声分数，并与各数据集标签 `label=1` 为噪声计算 AUC 和 best-threshold F1。
 
 ## 运行命令
 
 ```bash
 cd /home/stu1/HJX/eventcam/EDnCNN
-/home/stu1/MATLAB/R2022b/bin/matlab -nodisplay -nosplash -r "addpath('scripts'); run_edncnn_pretrained_auc; exit"
+CUDA_VISIBLE_DEVICES=1 /home/stu1/MATLAB/R2022b/bin/matlab -nodisplay -nosplash \
+  -r "addpath('/home/stu1/HJX/eventcam/EDnCNN/scripts'); run_edncnn_pretrained_auc; exit"
 ```
 
 ## 结果文件
 
-- `results/driving_mix_auc.csv`
-- `results/ed24_auc.csv`
-- `results/dvsclean_auc.csv`
-- `results/led_auc.csv`
+- `results/driving_mix_auc.csv`, `results/driving_mix_metrics.csv`
+- `results/ed24_auc.csv`, `results/ed24_metrics.csv`
+- `results/dvsclean_auc.csv`, `results/dvsclean_metrics.csv`
+- `results/led_auc.csv`, `results/led_metrics.csv`
 
 ## 当前结果摘要
 
-- Driving Mix：平均 AUC = 0.868087，结果文件 `/home/stu1/HJX/eventcam/EDnCNN/results/driving_mix_auc.csv`。
-- ED24 held-out：平均 AUC = 0.883300，结果文件 `/home/stu1/HJX/eventcam/EDnCNN/results/ed24_auc.csv`。
-- DVSCLEAN：平均 AUC = 0.763251，结果文件 `/home/stu1/HJX/eventcam/EDnCNN/results/dvsclean_auc.csv`。
-- LED：平均 AUC = 0.799510，结果文件 `/home/stu1/HJX/eventcam/EDnCNN/results/led_auc.csv`。
+- Driving Mix：平均 AUC = 0.868087，平均 noise-F1 = 0.708001。
+- ED24 held-out：平均 AUC = 0.883300，平均 noise-F1 = 0.849058。
+- DVSCLEAN：平均 AUC = 0.763251，平均 noise-F1 = 0.774521。
+- LED：平均 AUC = 0.799510，平均 noise-F1 = 0.342189。
 
-## 完整结果
+## F1 补充结果与口径说明
+
+重要说明：此前表格里的 `best_f1` 是以 `label=1` 的“噪声事件”为正类计算的 **noise-F1**，不是以保留下来的干净/信号事件为正类的去噪 F1。由于噪声等级升高时正类比例也显著升高，noise-F1 可能在 AUC 下降时反而升高；这不是 AUC 计算错误，而是 F1 对类别比例敏感导致的。因此，noise-F1 不适合直接跨噪声等级比较去噪质量。
+
+为了避免误用，`*_metrics.csv` 中已追加：
+
+- `noise_ratio`：噪声事件占比；
+- `always_noise_f1_baseline`：如果把所有事件都判为噪声时的 noise-F1 基线；
+- `signal_f1_at_noise_best_threshold`：在同一个 noise-F1 最优阈值下，把信号事件作为正类得到的 signal-F1。
+
+如果论文需要严格报告“信号/干净事件为正类”的最佳 F1，应重新扫描阈值计算 `best_signal_f1`，而不是使用当前 `best_f1` 这一列。
+
+结果文件：
+
+- `results/driving_mix_metrics.csv`
+- `results/ed24_metrics.csv`
+- `results/dvsclean_metrics.csv`
+- `results/led_metrics.csv`
+
+### 平均结果
+
+| 数据集 | 平均 AUC | 平均 noise-F1 | 同阈值平均 signal-F1 |
+| --- | --- | --- | --- |
+| Driving Mix | 0.868087 | 0.708001 | 0.821898 |
+| ED24 held-out | 0.883300 | 0.849058 | 0.761907 |
+| DVSCLEAN | 0.763251 | 0.774521 | 0.762632 |
+| LED | 0.799510 | 0.342189 | 0.922532 |
 
 ### Driving Mix
 
-| 频率 | AUC |
-|------|-----|
-| 1Hz | 0.881746 |
-| 3Hz | 0.873734 |
-| 5Hz | 0.866095 |
-| 7Hz | 0.864302 |
-| 10Hz | 0.854558 |
-
-平均 AUC：**0.868087**。
+| 频率 | AUC | noise-F1 | 噪声比例 | 全判噪声F1基线 | 同阈值signal-F1 |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 0.881746 | 0.528364 | 0.111121 | 0.200017 | 0.930200 |
+| 3 | 0.873734 | 0.682800 | 0.272059 | 0.427746 | 0.865298 |
+| 5 | 0.866095 | 0.740891 | 0.384407 | 0.555338 | 0.815577 |
+| 7 | 0.864302 | 0.778447 | 0.465706 | 0.635470 | 0.779113 |
+| 10 | 0.854558 | 0.809504 | 0.555057 | 0.713874 | 0.719301 |
 
 ### ED24 held-out
 
-| 数据集 | 电压 | AUC |
-|--------|------|-----|
-| Pedestrain_06 | 1.8V | 0.898486 |
-| Pedestrain_06 | 2.1V | 0.883143 |
-| Pedestrain_06 | 2.5V | 0.846444 |
-| Pedestrain_06 | 3.3V | 0.809764 |
-| Bicycle_02 | 1.8V | 0.939236 |
-| Bicycle_02 | 2.1V | 0.929164 |
-| Bicycle_02 | 2.5V | 0.903195 |
-| Bicycle_02 | 3.3V | 0.856968 |
-
-平均 AUC：**0.883300**。
+| 数据集 | 电压 | AUC | noise-F1 | 噪声比例 | 全判噪声F1基线 | 同阈值signal-F1 |
+| --- | --- | --- | --- | --- | --- | --- |
+| Pedestrain_06 | 1.8 | 0.898486 | 0.611214 | 0.163172 | 0.280564 | 0.911303 |
+| Pedestrain_06 | 2.1 | 0.883143 | 0.804595 | 0.454222 | 0.624694 | 0.802242 |
+| Pedestrain_06 | 2.5 | 0.846444 | 0.895842 | 0.713356 | 0.832700 | 0.658841 |
+| Pedestrain_06 | 3.3 | 0.809764 | 0.929967 | 0.819508 | 0.900802 | 0.547439 |
+| Bicycle_02 | 1.8 | 0.939236 | 0.771274 | 0.228807 | 0.372405 | 0.929078 |
+| Bicycle_02 | 2.1 | 0.929164 | 0.884546 | 0.542212 | 0.703162 | 0.848670 |
+| Bicycle_02 | 2.5 | 0.903195 | 0.936394 | 0.764745 | 0.866692 | 0.752741 |
+| Bicycle_02 | 3.3 | 0.856968 | 0.958634 | 0.867917 | 0.929289 | 0.644942 |
 
 ### DVSCLEAN
 
-| Video | Noise | AUC |
-|-------|-------|-----|
-| MAH00444 | 50 | 0.914565 |
-| MAH00444 | 100 | 0.900174 |
-| MAH00446 | 50 | 0.574157 |
-| MAH00446 | 100 | 0.537788 |
-| MAH00447 | 50 | 0.786672 |
-| MAH00447 | 100 | 0.756345 |
-| MAH00448 | 50 | 0.781409 |
-| MAH00448 | 100 | 0.751384 |
-| MAH00449 | 50 | 0.830663 |
-| MAH00449 | 100 | 0.799350 |
-
-平均 AUC：**0.763251**。
+| Video | Noise | AUC | noise-F1 | 噪声比例 | 全判噪声F1基线 | 同阈值signal-F1 |
+| --- | --- | --- | --- | --- | --- | --- |
+| MAH00444 | 50 | 0.914565 | 0.857847 | 0.321228 | 0.486257 | 0.921232 |
+| MAH00444 | 100 | 0.900174 | 0.891942 | 0.486458 | 0.654519 | 0.880618 |
+| MAH00446 | 50 | 0.574157 | 0.611008 | 0.321333 | 0.486376 | 0.611174 |
+| MAH00446 | 100 | 0.537788 | 0.724823 | 0.486521 | 0.654577 | 0.497127 |
+| MAH00447 | 50 | 0.786672 | 0.737646 | 0.321435 | 0.486494 | 0.818119 |
+| MAH00447 | 100 | 0.756345 | 0.807637 | 0.486316 | 0.654391 | 0.740065 |
+| MAH00448 | 50 | 0.781409 | 0.731954 | 0.321343 | 0.486388 | 0.811334 |
+| MAH00448 | 100 | 0.751384 | 0.805456 | 0.486471 | 0.654532 | 0.737538 |
+| MAH00449 | 50 | 0.830663 | 0.758563 | 0.321117 | 0.486130 | 0.841408 |
+| MAH00449 | 100 | 0.799350 | 0.818327 | 0.486277 | 0.654356 | 0.767708 |
 
 ### LED
 
-| Scene | AUC |
-|-------|-----|
-| scene_100 | 0.838795 |
-| scene_1004 | 0.699925 |
-| scene_1018 | 0.802020 |
-| scene_1028 | 0.865969 |
-| scene_1032 | 0.840968 |
-| scene_1033 | 0.776307 |
-| scene_1034 | 0.710526 |
-| scene_1043 | 0.829283 |
-| scene_1045 | 0.797333 |
-| scene_1046 | 0.833971 |
-
-平均 AUC：**0.799510**。
-
+| Scene | AUC | noise-F1 | 噪声比例 | 全判噪声F1基线 | 同阈值signal-F1 |
+| --- | --- | --- | --- | --- | --- |
+| scene_100 | 0.838795 | 0.306421 | 0.042285 | 0.081139 | 0.963330 |
+| scene_1004 | 0.699925 | 0.304239 | 0.101891 | 0.184938 | 0.898382 |
+| scene_1018 | 0.802020 | 0.353406 | 0.089139 | 0.163687 | 0.907567 |
+| scene_1028 | 0.865969 | 0.357708 | 0.061515 | 0.115901 | 0.937767 |
+| scene_1032 | 0.840968 | 0.347786 | 0.073795 | 0.137448 | 0.921557 |
+| scene_1033 | 0.776307 | 0.351626 | 0.092337 | 0.169064 | 0.910640 |
+| scene_1034 | 0.710526 | 0.319822 | 0.100127 | 0.182028 | 0.906253 |
+| scene_1043 | 0.829283 | 0.362935 | 0.076315 | 0.141807 | 0.928603 |
+| scene_1045 | 0.797333 | 0.353355 | 0.084104 | 0.155159 | 0.916114 |
+| scene_1046 | 0.833971 | 0.364596 | 0.071590 | 0.133615 | 0.935104 |
 ## 与 EDformer 的对比结论
 
-| 数据集 | EDnCNN 预训练 | EDformer ED24 预训练 | 结论 |
-|--------|---------------|----------------------|------|
-| Driving Mix | 0.868087 | 0.940906 | EDformer 明显更强 |
-| ED24 held-out | 0.883300 | 0.982015 | EDformer 明显更强 |
-| DVSCLEAN | 0.763251 | 0.980808 | EDformer 明显更强，EDnCNN 在 MAH00446 上失效明显 |
-| LED | 0.799510 | 0.581471 | EDnCNN zero-shot 明显更强 |
+| 数据集 | EDnCNN 预训练 AUC | EDnCNN 预训练 noise-F1 | EDformer ED24 预训练 AUC | EDformer ED24 预训练 noise-F1 |
+|---|---:|---:|---:|---:|
+| Driving Mix | 0.868087 | 0.708001 | 0.940906 | 0.828587 |
+| ED24 held-out | 0.883300 | 0.849058 | 0.982015 | 0.946015 |
+| DVSCLEAN | 0.763251 | 0.774521 | 0.980808 | 0.934934 |
+| LED | 0.799510 | 0.342189 | 0.581471 | 0.166488 |
 
-结论：
+结论：EDformer 原始 ED24 预训练模型在 Driving、ED24 和 DVSCLEAN 上明显优于 EDnCNN；但在 LED 上，EDnCNN 的 zero-shot AUC 和 noise-F1 都明显高于原始 EDformer，说明 EDnCNN 对 LED/Prophesee 域的预训练适配更好。noise-F1 受正负样本比例影响较大，因此论文中建议与 AUC 同时报告，不单独用 F1 评价排序能力。
 
-1. **EDnCNN 预训练模型在 LED 上表现最好**，平均 AUC 为 0.799510，已经接近此前 EDformer-LED 微调和 LED 从零训练的约 0.79，明显优于原始 EDformer ED24 预训练模型的 LED zero-shot 结果 0.581471。
-2. **EDnCNN 在 ED24、Driving、DVSCLEAN 上明显弱于 EDformer**。这说明 EdnCNN 的预训练权重并不是一个更强的通用事件去噪模型，但它对 LED/Prophesee 数据的 zero-shot 适配反而更好。
-3. **DVSCLEAN 结果波动很大**。MAH00444 可达到 0.90 以上，但 MAH00446 只有 0.54-0.57，说明 EDnCNN 对不同视频/噪声组合不稳定，不建议把它作为强泛化 baseline。
-4. **论文使用建议**：如果论文重点讨论 LED 数据集，EDnCNN 预训练结果有较强对比价值，因为它不使用 LED 训练集却达到 0.80 左右；如果讨论跨数据集平均泛化，EDformer 仍更强。
-5. **方法限制说明**：本评估没有使用 APS/IMU 重新生成 EPM，而是只使用预训练 CNN 对事件 time-surface 特征推理。因此论文中应写清楚是 `pretrained EDnCNN CNN inference without EPM re-estimation`，避免与原论文完整 EPM+EDnCNN 流程混淆。
+## DVSCLEAN 低 AUC 与分辨率的关系
+
+DVSCLEAN 的 1280×720 分辨率会影响 EDnCNN，但它和 EDFormer 的坐标尺度问题不是同一种机制。EDnCNN 不直接输入绝对 x/y 坐标，而是在每个事件周围截取 `25×25×4` 的局部 time-surface patch；因此它对绝对坐标范围的敏感性比 EDFormer 弱，但仍会受局部事件密度、模拟噪声分布、视频内容和传感器域差异影响。
+
+目前证据显示，DVSCLEAN 低 AUC 不能只归因于边缘或分辨率：MAH00444 可达到 0.90 以上，但 MAH00446 只有 0.54-0.57，说明 EDnCNN 对不同视频/噪声组合不稳定。

@@ -20,7 +20,7 @@ def make_panel(
     labels: Sequence[str] | None = None,
     cols: int = 4,
     pad_px: int = 10,
-    label_height_px: int = 44,
+    label_height_px: int = 62,
     bg_bgr: tuple[int, int, int] = (255, 255, 255),
 ) -> np.ndarray:
     if not images:
@@ -59,7 +59,7 @@ def make_panel(
             y0=y0 + h,
             w=tile_w,
             h=int(label_height_px),
-            font_size=24,
+            font_size=34,
         )
     return out
 
@@ -90,8 +90,8 @@ def make_dataset_method_panel(
     out_path: str | Path,
     case_labels: Sequence[str] | None = None,
     tile_pad_px: int = 8,
-    caption_h_px: int = 60,
-    row_label_w_px: int = 60,
+    caption_h_px: int = 82,
+    row_label_w_px: int = 82,
     max_tile_w_px: int = 346,
     max_tile_h_px: int = 260,
     missing_bg_bgr: tuple[int, int, int] = (245, 245, 245),
@@ -153,7 +153,7 @@ def make_dataset_method_panel(
     caption_labels = _panel_caption_labels(methods)
     for c, caption in enumerate(caption_labels):
         x0 = row_label_w_px + tile_pad_px + c * (tile_w + tile_pad_px)
-        _draw_centered_text(out, caption, x0=x0, y0=caption_y0, w=tile_w, h=caption_h_px, font_size=28)
+        _draw_centered_text(out, caption, x0=x0, y0=caption_y0, w=tile_w, h=caption_h_px, font_size=40)
 
     return save_panel_image(out, out_path)
 
@@ -253,7 +253,7 @@ def _draw_vertical_label(img_bgr: np.ndarray, text: str, *, x_center: int, y0: i
             y += 14
         return
 
-    font = _pil_font(24)
+    font = _pil_font(34)
     tmp = Image.new("RGB", (260, 36), (255, 255, 255))
     draw = ImageDraw.Draw(tmp)
     bbox = draw.textbbox((0, 0), text, font=font)

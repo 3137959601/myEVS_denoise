@@ -28,7 +28,12 @@ public:
           alpha_form_(read_alpha_form()),
           u_denom_factor_(read_u_denom_factor()),
           b_denom_form_(read_b_denom_form()),
+          hot_func_(read_hot_func()),
           hot_k_(read_hot_k()),
+          hot_fmin_(read_hot_fmin()),
+          hot_c_(read_hot_c()),
+          hot_q0_(read_hot_q0()),
+          hot_p_(read_hot_p()),
           hot_binary_(env_flag("MYEVS_N149_HOT_BINARY")),
           hot_lut_enabled_(false),
           hot_lut_bits_(std::min(read_hot_lut_bits(), hot_bits_)),
@@ -93,7 +98,8 @@ private:
     uint64_t tau_; int radius_; double threshold_; double sigma_;
     int hot_bits_; int32_t hot_mask_; int hot_int_bits_; int32_t hot_unit_; double hot_decay_k_;
     bool no_hot_, no_beta_, no_mix_, no_opp_, no_same_, no_sfrac_, no_spatial_, blind_;
-    int alpha_form_; double u_denom_factor_; int b_denom_form_; double hot_k_;
+    int alpha_form_; double u_denom_factor_; int b_denom_form_; int hot_func_; double hot_k_;
+    double hot_fmin_, hot_c_, hot_q0_, hot_p_;
     bool hot_binary_, hot_lut_enabled_, wt_linear_, simple_a_, simple_b_, alpha_instant_, use_ema_;
     double alpha_fixed_; int hot_lut_bits_;
     std::vector<double> hot_lut_tbl_; int hot_lut_step_;
@@ -151,6 +157,28 @@ private:
         const char *v = std::getenv("MYEVS_N149_HOT_K"); if (!v) return 2.0;
         try { double d = std::stod(v); return std::isfinite(d) && d >= 1.0 ? d : 2.0; } catch (...) { return 2.0; }
     }
+    static int read_hot_func() {
+        const char *v = std::getenv("MYEVS_N149_HOT_FUNC"); if (!v) return 0;
+        std::string s(v);
+        for (char &c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (s == "rational" || s == "k" || s == "default") return 0;
+        if (s == "exp" || s == "exponential") return 1;
+        if (s == "hill" || s == "sigmoid") return 2;
+        if (s == "power" || s == "pow") return 3;
+        if (s == "linear" || s == "piecewise_linear") return 4;
+        return 0;
+    }
+    static double read_env_double(const char *name, double fallback, double lo, double hi) {
+        const char *v = std::getenv(name); if (!v) return fallback;
+        try {
+            double d = std::stod(v);
+            return std::isfinite(d) ? std::clamp(d, lo, hi) : fallback;
+        } catch (...) { return fallback; }
+    }
+    static double read_hot_fmin() { return read_env_double("MYEVS_N149_HOT_FMIN", 0.5, 0.0, 1.0); }
+    static double read_hot_c() { return read_env_double("MYEVS_N149_HOT_C", 2.0, 0.0, 1024.0); }
+    static double read_hot_q0() { return read_env_double("MYEVS_N149_HOT_Q0", 1.0, 1e-6, 1024.0); }
+    static double read_hot_p() { return read_env_double("MYEVS_N149_HOT_P", 1.0, 1e-6, 32.0); }
     static double read_alpha_fixed() {
         const char *v = std::getenv("MYEVS_N149_ALPHA_FIXED"); if (!v) return 0.25;  // v2.2 default
         try { double d = std::stod(v); return std::isfinite(d) && d >= 0.0 ? d : 0.25; } catch (...) { return 0.25; }
@@ -159,14 +187,31 @@ private:
         const char *v = std::getenv("MYEVS_N149_HOT_LUT_BITS"); if (!v) return 4;
         try { int b = std::stoi(v); return std::clamp(b, 2, 8); } catch (...) { return 4; }
     }
+    double hot_discount_from_h(double h) const {
+        double q = std::max(0.0, h / static_cast<double>(std::max<int32_t>(1, hot_unit_)));
+        double f = 1.0;
+        if (hot_func_ == 1) {
+            f = hot_fmin_ + (1.0 - hot_fmin_) * std::exp(-hot_c_ * q);
+        } else if (hot_func_ == 2) {
+            double z = std::pow(q / std::max(1e-6, hot_q0_), hot_p_);
+            f = hot_fmin_ + (1.0 - hot_fmin_) / (1.0 + z);
+        } else if (hot_func_ == 3) {
+            f = hot_fmin_ + (1.0 - hot_fmin_) / std::pow(1.0 + hot_c_ * q, hot_p_);
+        } else if (hot_func_ == 4) {
+            f = std::max(hot_fmin_, 1.0 - hot_c_ * q);
+        } else {
+            double tr = static_cast<double>(hot_unit_);
+            f = (h + tr) / (hot_k_ * h + tr);
+        }
+        return std::clamp(f, 0.0, 1.0);
+    }
     void build_hot_lut() {
         int lut_entries = 1 << hot_lut_bits_;
         uint64_t h_max = uint64_t{1} << hot_bits_;
         uint64_t step = std::max<uint64_t>(1, h_max >> hot_lut_bits_);
-        double tr = static_cast<double>(hot_unit_);
         hot_lut_tbl_.resize(lut_entries + 1);
         for (int i = 0; i <= lut_entries; ++i)
-            hot_lut_tbl_[i] = (static_cast<double>(i*step) + tr) / (hot_k_ * static_cast<double>(i*step) + tr);
+            hot_lut_tbl_[i] = hot_discount_from_h(static_cast<double>(i*step));
         hot_lut_step_ = static_cast<int>(std::min<uint64_t>(step, static_cast<uint64_t>(std::numeric_limits<int>::max())));
     }
 
@@ -229,7 +274,7 @@ private:
         } else if (hot_binary_) {
             discount_factor = (static_cast<double>(h0) > tr) ? hot_k_ : 1.0;
         } else {
-            discount_factor = discount_num / (hot_k_ * static_cast<double>(h0) + tr);
+            discount_factor = hot_discount_from_h(static_cast<double>(h0));
         }
 
         double N = 4096.0;

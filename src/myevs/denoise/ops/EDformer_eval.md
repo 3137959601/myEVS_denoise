@@ -572,6 +572,87 @@ CUDA_VISIBLE_DEVICES=2 /home/stu1/.conda/envs/edformer220/bin/python \
   --device cuda:0
 ```
 
+
+## F1 补充结果与口径说明
+
+重要说明：此前表格里的 `best_f1` 是以 `label=1` 的“噪声事件”为正类计算的 **noise-F1**，不是以保留下来的干净/信号事件为正类的去噪 F1。由于噪声等级升高时正类比例也显著升高，noise-F1 可能在 AUC 下降时反而升高；这不是 AUC 计算错误，而是 F1 对类别比例敏感导致的。因此，noise-F1 不适合直接跨噪声等级比较去噪质量。
+
+为了避免误用，`*_metrics.csv` 中已追加：
+
+- `noise_ratio`：噪声事件占比；
+- `always_noise_f1_baseline`：如果把所有事件都判为噪声时的 noise-F1 基线；
+- `signal_f1_at_noise_best_threshold`：在同一个 noise-F1 最优阈值下，把信号事件作为正类得到的 signal-F1。
+
+如果论文需要严格报告“信号/干净事件为正类”的最佳 F1，应重新扫描阈值计算 `best_signal_f1`，而不是使用当前 `best_f1` 这一列。
+
+结果文件：
+
+- `results/driving_mix_metrics.csv`
+- `results/ed24_metrics.csv`
+- `results/dvsclean_metrics.csv`
+- `results/led_metrics.csv`
+
+### 平均结果
+
+| 数据集 | 平均 AUC | 平均 noise-F1 | 同阈值平均 signal-F1 |
+| --- | --- | --- | --- |
+| Driving Mix | 0.940906 | 0.828587 | 0.898646 |
+| ED24 held-out | 0.982015 | 0.946015 | 0.924588 |
+| DVSCLEAN | 0.980808 | 0.934934 | 0.950075 |
+| LED | 0.581471 | 0.166488 | 0.544783 |
+
+### Driving Mix
+
+| 频率 | AUC | noise-F1 | 噪声比例 | 全判噪声F1基线 | 同阈值signal-F1 |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 0.954152 | 0.712009 | 0.113321 | 0.203573 | 0.958630 |
+| 3 | 0.947175 | 0.818040 | 0.276633 | 0.433379 | 0.924105 |
+| 5 | 0.942438 | 0.854248 | 0.389962 | 0.561111 | 0.898378 |
+| 7 | 0.934371 | 0.870053 | 0.471538 | 0.640878 | 0.871879 |
+| 10 | 0.926393 | 0.888583 | 0.560724 | 0.718544 | 0.840239 |
+
+### ED24 held-out
+
+| 数据集 | 电压 | AUC | noise-F1 | 噪声比例 | 全判噪声F1基线 | 同阈值signal-F1 |
+| --- | --- | --- | --- | --- | --- | --- |
+| Pedestrain_06 | 1.8 | 0.977345 | 0.839605 | 0.163044 | 0.280375 | 0.968155 |
+| Pedestrain_06 | 2.1 | 0.976287 | 0.918303 | 0.454132 | 0.624609 | 0.929441 |
+| Pedestrain_06 | 2.5 | 0.971501 | 0.954213 | 0.712730 | 0.832273 | 0.878746 |
+| Pedestrain_06 | 3.3 | 0.961457 | 0.965277 | 0.819514 | 0.900805 | 0.826410 |
+| Bicycle_02 | 1.8 | 0.995207 | 0.952376 | 0.225146 | 0.367542 | 0.986352 |
+| Bicycle_02 | 2.1 | 0.995429 | 0.972425 | 0.542577 | 0.703468 | 0.967250 |
+| Bicycle_02 | 2.5 | 0.993000 | 0.980850 | 0.757193 | 0.861821 | 0.938985 |
+| Bicycle_02 | 3.3 | 0.985895 | 0.985073 | 0.862402 | 0.926118 | 0.901363 |
+
+### DVSCLEAN
+
+| Video | Noise | AUC | noise-F1 | 噪声比例 | 全判噪声F1基线 | 同阈值signal-F1 |
+| --- | --- | --- | --- | --- | --- | --- |
+| MAH00444 | 50 | 0.989261 | 0.938531 | 0.334296 | 0.501082 | 0.968344 |
+| MAH00444 | 100 | 0.978885 | 0.946032 | 0.500630 | 0.667226 | 0.943490 |
+| MAH00446 | 50 | 0.993814 | 0.958748 | 0.333524 | 0.500214 | 0.979067 |
+| MAH00446 | 100 | 0.989393 | 0.966030 | 0.501544 | 0.668037 | 0.964926 |
+| MAH00447 | 50 | 0.983080 | 0.918222 | 0.336016 | 0.503012 | 0.957166 |
+| MAH00447 | 100 | 0.969578 | 0.932378 | 0.502254 | 0.668667 | 0.927463 |
+| MAH00448 | 50 | 0.988210 | 0.930198 | 0.335620 | 0.502569 | 0.963999 |
+| MAH00448 | 100 | 0.980195 | 0.943348 | 0.505204 | 0.671276 | 0.940016 |
+| MAH00449 | 50 | 0.977526 | 0.897831 | 0.334254 | 0.501035 | 0.946708 |
+| MAH00449 | 100 | 0.958138 | 0.918018 | 0.504731 | 0.670859 | 0.909574 |
+
+### LED
+
+| Scene | AUC | noise-F1 | 噪声比例 | 全判噪声F1基线 | 同阈值signal-F1 |
+| --- | --- | --- | --- | --- | --- |
+| scene_100 | 0.620102 | 0.119153 | 0.042278 | 0.081125 | 0.961314 |
+| scene_1004 | 0.579085 | 0.209451 | 0.102465 | 0.185884 | 0.449627 |
+| scene_1018 | 0.577195 | 0.177847 | 0.088953 | 0.163374 | 0.445623 |
+| scene_1028 | 0.551072 | 0.124371 | 0.061544 | 0.115951 | 0.303064 |
+| scene_1032 | 0.617092 | 0.166812 | 0.074044 | 0.137879 | 0.802315 |
+| scene_1033 | 0.559350 | 0.184517 | 0.092211 | 0.168851 | 0.378716 |
+| scene_1034 | 0.574792 | 0.202501 | 0.100325 | 0.182355 | 0.408845 |
+| scene_1043 | 0.610079 | 0.169666 | 0.076309 | 0.141798 | 0.883478 |
+| scene_1045 | 0.564652 | 0.165798 | 0.084059 | 0.155082 | 0.427894 |
+| scene_1046 | 0.561292 | 0.144767 | 0.071627 | 0.133679 | 0.386948 |
 ---
 
 ## 文件结构
@@ -581,6 +662,7 @@ CUDA_VISIBLE_DEVICES=2 /home/stu1/.conda/envs/edformer220/bin/python \
 ├── Readme.md                          # 本文件（评估结果与结论）
 ├── scripts/
 │   ├── eval_driving_mix.py            # driving_mix 频率评估脚本
+│   ├── eval_pretrained_metrics.py    # 原始预训练模型 AUC + F1 口径检查脚本
 │   ├── eval_ed24.py                   # ED24 电压评估脚本
 │   ├── eval_dvsclean.py               # DVSCLEAN 噪声评估脚本
 │   ├── eval_led.py                    # LED 场景评估脚本
@@ -609,14 +691,18 @@ CUDA_VISIBLE_DEVICES=2 /home/stu1/.conda/envs/edformer220/bin/python \
 │       └── scene_1046.csv
 └── results/
     ├── driving_mix_auc.csv            # driving_mix 频率 AUC 汇总
+    ├── driving_mix_metrics.csv        # driving_mix AUC + F1 口径汇总
     ├── roc_data_1hz.csv               # 1Hz ROC 曲线数据 (FPR, TPR)
     ├── roc_data_3hz.csv               # 3Hz ROC 曲线数据
     ├── roc_data_5hz.csv               # 5Hz ROC 曲线数据
     ├── roc_data_7hz.csv               # 7Hz ROC 曲线数据
     ├── roc_data_10hz.csv              # 10Hz ROC 曲线数据
     ├── ed24_auc.csv                   # ED24 电压 AUC 汇总
+    ├── ed24_metrics.csv               # ED24 AUC + F1 口径汇总
     ├── dvsclean_auc.csv               # DVSCLEAN 噪声 AUC 汇总
+    ├── dvsclean_metrics.csv           # DVSCLEAN AUC + F1 口径汇总
     └── led_auc.csv                    # LED 场景 AUC 汇总
+    └── led_metrics.csv                # LED AUC + F1 口径汇总
 ```
 
 ## 复现命令
@@ -641,4 +727,10 @@ cd /tmp && /home/stu1/.conda/envs/edformer220/bin/python \
 # LED 多场景评估
 cd /tmp && /home/stu1/.conda/envs/edformer220/bin/python \
   /home/stu1/HJX/eventcam/EDformer/scripts/eval_led.py
+
+# 原始预训练模型四个数据集 AUC + F1 口径检查
+cd /home/stu1/HJX/eventcam/EDformer && CUDA_VISIBLE_DEVICES=1 \
+  /home/stu1/.conda/envs/edformer220/bin/python \
+  scripts/eval_pretrained_metrics.py \
+  --output-dir /home/stu1/HJX/eventcam/EDformer/results
 ```

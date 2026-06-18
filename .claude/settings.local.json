@@ -31,7 +31,10 @@
       "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/n149_ablation/run_comp_ab_polarity_v3.py)",
       "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/n149_ablation/run_comp_ab_time_only.py)",
       "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/n149_ablation/run_time_only_sweep.py)",
-      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/n149_ablation/run_no_spatial_sweep.py)"
+      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/n149_ablation/run_no_spatial_sweep.py)",
+      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/run_all_f1.py)",
+      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/n149_ablation/plot_ed24_sweep.py)",
+      "Bash(D:/software/Anaconda_envs/envs/myEVS/python.exe scripts/n149_ablation/plot_dvsclean_sweep.py)"
     ]
   }
 }

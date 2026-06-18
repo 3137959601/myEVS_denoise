@@ -22,6 +22,13 @@ def _read_float_env(name: str, default: float) -> float:
     return float(v)
 
 
+def _read_bool_env(name: str) -> bool:
+    v = os.environ.get(name)
+    if v is None:
+        return False
+    return str(v).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _require_numba() -> None:
     if numba is None:
         raise RuntimeError("n149 requires numba, but import failed")
@@ -76,6 +83,8 @@ def _try_build_n149_kernel():
         tau_base: int,
         inv_tau_base: float,
         w_space: float,
+        no_spatial: int,
+        blind: int,
         last_ts: np.ndarray,
         last_pol: np.ndarray,
     ) -> tuple[float, float, int]:
@@ -97,8 +106,11 @@ def _try_build_n149_kernel():
             return 0.0, 0.0, 0
 
         w_time = base_time * base_time
-        wst = w_time * w_space
-        if pol_nb == pi:
+        if no_spatial != 0:
+            wst = w_time
+        else:
+            wst = w_time * w_space
+        if blind != 0 or pol_nb == pi:
             return wst, 0.0, 1
         return 0.0, wst, 0
 
@@ -119,6 +131,11 @@ def _try_build_n149_kernel():
         lut_axis: np.ndarray,
         lut_diag: np.ndarray,
         lut_int: np.ndarray,
+        alpha_fixed: float,
+        no_spatial: int,
+        no_opp: int,
+        no_hot: int,
+        blind: int,
         hot_state: np.ndarray,
         beta_state: np.ndarray,
         mix_state: np.ndarray,
@@ -216,25 +233,25 @@ def _try_build_n149_kernel():
 
                 nx = xi + u
                 if nx <= x1:
-                    rs, ro, cs = _acc_neighbor(yi * width + nx, ti, pi, tau_base, inv_tau_base, w_axis, last_ts, last_pol)
+                    rs, ro, cs = _acc_neighbor(yi * width + nx, ti, pi, tau_base, inv_tau_base, w_axis, no_spatial, blind, last_ts, last_pol)
                     raw_same += rs
                     raw_opp += ro
                     cnt_support += cs
                 nx = xi - u
                 if nx >= x0:
-                    rs, ro, cs = _acc_neighbor(yi * width + nx, ti, pi, tau_base, inv_tau_base, w_axis, last_ts, last_pol)
+                    rs, ro, cs = _acc_neighbor(yi * width + nx, ti, pi, tau_base, inv_tau_base, w_axis, no_spatial, blind, last_ts, last_pol)
                     raw_same += rs
                     raw_opp += ro
                     cnt_support += cs
                 ny = yi + u
                 if ny <= y1:
-                    rs, ro, cs = _acc_neighbor(ny * width + xi, ti, pi, tau_base, inv_tau_base, w_axis, last_ts, last_pol)
+                    rs, ro, cs = _acc_neighbor(ny * width + xi, ti, pi, tau_base, inv_tau_base, w_axis, no_spatial, blind, last_ts, last_pol)
                     raw_same += rs
                     raw_opp += ro
                     cnt_support += cs
                 ny = yi - u
                 if ny >= y0:
-                    rs, ro, cs = _acc_neighbor(ny * width + xi, ti, pi, tau_base, inv_tau_base, w_axis, last_ts, last_pol)
+                    rs, ro, cs = _acc_neighbor(ny * width + xi, ti, pi, tau_base, inv_tau_base, w_axis, no_spatial, blind, last_ts, last_pol)
                     raw_same += rs
                     raw_opp += ro
                     cnt_support += cs
@@ -250,28 +267,28 @@ def _try_build_n149_kernel():
                 nx = xi + u
                 ny = yi + u
                 if nx <= x1 and ny <= y1:
-                    rs, ro, cs = _acc_neighbor(ny * width + nx, ti, pi, tau_base, inv_tau_base, w_diag, last_ts, last_pol)
+                    rs, ro, cs = _acc_neighbor(ny * width + nx, ti, pi, tau_base, inv_tau_base, w_diag, no_spatial, blind, last_ts, last_pol)
                     raw_same += rs
                     raw_opp += ro
                     cnt_support += cs
                 nx = xi + u
                 ny = yi - u
                 if nx <= x1 and ny >= y0:
-                    rs, ro, cs = _acc_neighbor(ny * width + nx, ti, pi, tau_base, inv_tau_base, w_diag, last_ts, last_pol)
+                    rs, ro, cs = _acc_neighbor(ny * width + nx, ti, pi, tau_base, inv_tau_base, w_diag, no_spatial, blind, last_ts, last_pol)
                     raw_same += rs
                     raw_opp += ro
                     cnt_support += cs
                 nx = xi - u
                 ny = yi + u
                 if nx >= x0 and ny <= y1:
-                    rs, ro, cs = _acc_neighbor(ny * width + nx, ti, pi, tau_base, inv_tau_base, w_diag, last_ts, last_pol)
+                    rs, ro, cs = _acc_neighbor(ny * width + nx, ti, pi, tau_base, inv_tau_base, w_diag, no_spatial, blind, last_ts, last_pol)
                     raw_same += rs
                     raw_opp += ro
                     cnt_support += cs
                 nx = xi - u
                 ny = yi - u
                 if nx >= x0 and ny >= y0:
-                    rs, ro, cs = _acc_neighbor(ny * width + nx, ti, pi, tau_base, inv_tau_base, w_diag, last_ts, last_pol)
+                    rs, ro, cs = _acc_neighbor(ny * width + nx, ti, pi, tau_base, inv_tau_base, w_diag, no_spatial, blind, last_ts, last_pol)
                     raw_same += rs
                     raw_opp += ro
                     cnt_support += cs
@@ -288,28 +305,28 @@ def _try_build_n149_kernel():
                 nx = xi + u
                 ny = yi + v
                 if nx <= x1 and ny <= y1:
-                    rs, ro, cs = _acc_neighbor(ny * width + nx, ti, pi, tau_base, inv_tau_base, w_uv, last_ts, last_pol)
+                    rs, ro, cs = _acc_neighbor(ny * width + nx, ti, pi, tau_base, inv_tau_base, w_uv, no_spatial, blind, last_ts, last_pol)
                     raw_same += rs
                     raw_opp += ro
                     cnt_support += cs
                 nx = xi + u
                 ny = yi - v
                 if nx <= x1 and ny >= y0:
-                    rs, ro, cs = _acc_neighbor(ny * width + nx, ti, pi, tau_base, inv_tau_base, w_uv, last_ts, last_pol)
+                    rs, ro, cs = _acc_neighbor(ny * width + nx, ti, pi, tau_base, inv_tau_base, w_uv, no_spatial, blind, last_ts, last_pol)
                     raw_same += rs
                     raw_opp += ro
                     cnt_support += cs
                 nx = xi - u
                 ny = yi + v
                 if nx >= x0 and ny <= y1:
-                    rs, ro, cs = _acc_neighbor(ny * width + nx, ti, pi, tau_base, inv_tau_base, w_uv, last_ts, last_pol)
+                    rs, ro, cs = _acc_neighbor(ny * width + nx, ti, pi, tau_base, inv_tau_base, w_uv, no_spatial, blind, last_ts, last_pol)
                     raw_same += rs
                     raw_opp += ro
                     cnt_support += cs
                 nx = xi - u
                 ny = yi - v
                 if nx >= x0 and ny >= y0:
-                    rs, ro, cs = _acc_neighbor(ny * width + nx, ti, pi, tau_base, inv_tau_base, w_uv, last_ts, last_pol)
+                    rs, ro, cs = _acc_neighbor(ny * width + nx, ti, pi, tau_base, inv_tau_base, w_uv, no_spatial, blind, last_ts, last_pol)
                     raw_same += rs
                     raw_opp += ro
                     cnt_support += cs
@@ -317,28 +334,28 @@ def _try_build_n149_kernel():
                 nx = xi + v
                 ny = yi + u
                 if nx <= x1 and ny <= y1:
-                    rs, ro, cs = _acc_neighbor(ny * width + nx, ti, pi, tau_base, inv_tau_base, w_uv, last_ts, last_pol)
+                    rs, ro, cs = _acc_neighbor(ny * width + nx, ti, pi, tau_base, inv_tau_base, w_uv, no_spatial, blind, last_ts, last_pol)
                     raw_same += rs
                     raw_opp += ro
                     cnt_support += cs
                 nx = xi + v
                 ny = yi - u
                 if nx <= x1 and ny >= y0:
-                    rs, ro, cs = _acc_neighbor(ny * width + nx, ti, pi, tau_base, inv_tau_base, w_uv, last_ts, last_pol)
+                    rs, ro, cs = _acc_neighbor(ny * width + nx, ti, pi, tau_base, inv_tau_base, w_uv, no_spatial, blind, last_ts, last_pol)
                     raw_same += rs
                     raw_opp += ro
                     cnt_support += cs
                 nx = xi - v
                 ny = yi + u
                 if nx >= x0 and ny <= y1:
-                    rs, ro, cs = _acc_neighbor(ny * width + nx, ti, pi, tau_base, inv_tau_base, w_uv, last_ts, last_pol)
+                    rs, ro, cs = _acc_neighbor(ny * width + nx, ti, pi, tau_base, inv_tau_base, w_uv, no_spatial, blind, last_ts, last_pol)
                     raw_same += rs
                     raw_opp += ro
                     cnt_support += cs
                 nx = xi - v
                 ny = yi - u
                 if nx >= x0 and ny >= y0:
-                    rs, ro, cs = _acc_neighbor(ny * width + nx, ti, pi, tau_base, inv_tau_base, w_uv, last_ts, last_pol)
+                    rs, ro, cs = _acc_neighbor(ny * width + nx, ti, pi, tau_base, inv_tau_base, w_uv, no_spatial, blind, last_ts, last_pol)
                     raw_same += rs
                     raw_opp += ro
                     cnt_support += cs
@@ -347,7 +364,13 @@ def _try_build_n149_kernel():
             last_pol[idx0] = np.int8(pi)
             hot_state[idx0] = np.int32(h0)
 
-            u_self = float(h0) / (float(h0) + float(tr) + eps)
+            if no_opp != 0:
+                raw_opp = 0.0
+
+            if no_hot != 0:
+                u_self = 0.0
+            else:
+                u_self = float(h0) / (float(h0) + float(tr) + eps)
             if u_self < 0.0:
                 u_self = 0.0
             if u_self > 1.0:
@@ -374,10 +397,13 @@ def _try_build_n149_kernel():
             if mstate > 1.0:
                 mstate = 1.0
 
-            alpha_eff = 1.0 - mstate
-            if alpha_eff < 0.0:
-                alpha_eff = 0.0
-            alpha_eff = alpha_eff * alpha_eff
+            if alpha_fixed >= 0.0:
+                alpha_eff = alpha_fixed
+            else:
+                alpha_eff = 1.0 - mstate
+                if alpha_eff < 0.0:
+                    alpha_eff = 0.0
+                alpha_eff = alpha_eff * alpha_eff
 
             raw_gated = raw_same + alpha_eff * raw_opp
             base_score = raw_gated / (1.0 + (u_self * u_self))
@@ -427,6 +453,23 @@ def score_stream_n149(
     sigma_space = float(_read_float_env("MYEVS_N149_SIGMA", 2.5))
     if sigma_space <= 1e-6:
         sigma_space = 1e-6
+    alpha_fixed = -1.0
+    alpha_env = os.environ.get("MYEVS_N149_ALPHA_FIXED")
+    if alpha_env not in (None, ""):
+        try:
+            alpha_fixed = float(alpha_env)
+        except Exception:
+            alpha_fixed = -1.0
+        if not bool(np.isfinite(alpha_fixed)):
+            alpha_fixed = -1.0
+        if alpha_fixed < 0.0:
+            alpha_fixed = 0.0
+        if alpha_fixed > 8.0:
+            alpha_fixed = 8.0
+    no_spatial = 1 if _read_bool_env("MYEVS_N149_NO_SPATIAL") else 0
+    no_opp = 1 if _read_bool_env("MYEVS_N149_NO_OPP") else 0
+    no_hot = 1 if _read_bool_env("MYEVS_N149_NO_HOT") else 0
+    blind = 1 if _read_bool_env("MYEVS_N149_BLIND") else 0
 
     axis_u, diag_u, int_u, int_v, lut_int = _build_compact_kernel_tables(int(radius_px), float(sigma_space))
     lut_axis = np.zeros((axis_u.shape[0],), dtype=np.float32)
@@ -459,6 +502,11 @@ def score_stream_n149(
         lut_axis,
         lut_diag,
         lut_int,
+        float(alpha_fixed),
+        int(no_spatial),
+        int(no_opp),
+        int(no_hot),
+        int(blind),
         hot_state,
         beta_state,
         mix_state,
